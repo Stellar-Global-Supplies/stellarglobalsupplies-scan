@@ -91,11 +91,17 @@ export async function syncSonarProjectKeys(
   const batch = [];
 
   for (const sonar of sonarProjects) {
-    // Extract bare repo slug from the project key (e.g. "sgs_my-repo" → "my-repo")
-    // so we can match even when the display name differs slightly.
-    const keySlug = sonar.projectKey.includes('_')
-      ? sonar.projectKey.split('_').slice(1).join('_').toLowerCase()
-      : sonar.projectKey.toLowerCase();
+    // SonarCloud project keys look like "stellar-global-supplies_stellarglobalsupplies-ai".
+    // The org prefix can itself contain underscores if the org slug uses them,
+    // so we cannot safely split on the first '_'. Instead we try every possible
+    // prefix boundary and keep the shortest suffix that still looks like a repo slug.
+    //
+    // Strategy: try stripping known org prefixes by progressively splitting on '_'
+    // from the left until we get a slug that matches a repo name.
+    const keyParts  = sonar.projectKey.toLowerCase().split('_');
+    const keySlugs  = keyParts.map((_, i) => keyParts.slice(i + 1).join('_')).filter(Boolean);
+    // Also try the full key and just the last segment as final fallbacks
+    keySlugs.push(sonar.projectKey.toLowerCase(), keyParts[keyParts.length - 1]);
 
     const match = repos.find(r => {
       const rName = r.name.toLowerCase();
@@ -103,7 +109,7 @@ export async function syncSonarProjectKeys(
       return (
         rUrl  === sonar.githubUrl.toLowerCase() ||
         rName === sonar.name.toLowerCase()      ||
-        rName === keySlug
+        keySlugs.some(slug => slug && rName === slug)
       );
     });
     if (match) {

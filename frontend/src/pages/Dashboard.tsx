@@ -103,8 +103,11 @@ export default function Dashboard() {
     setSonarSync(true);
     try {
       const res = await api.quality.sync();
-      alert(res.message);
-      if (tab === 'quality') await loadQuality();
+      alert(res.message + (res.synced === 0
+        ? '\n\nTip: Make sure repos are imported at sonarcloud.io first, then click Scan All to fetch metrics.'
+        : '\n\nNow click Scan All to fetch quality metrics for linked repos.'));
+      // Always reload quality after a sync attempt so the tab reflects new links
+      await loadQuality();
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : 'SonarCloud sync failed');
     } finally {
@@ -307,12 +310,22 @@ export default function Dashboard() {
 
           {filteredQuality.length === 0 ? (
             <div style={s.emptyQuality}>
-              <p>No code quality data yet.</p>
-              <p style={{ marginTop:8, color:'#aaa', fontSize:13 }}>
-                1. Import your repos at <a href="https://sonarcloud.io" target="_blank" rel="noreferrer">sonarcloud.io</a><br/>
-                2. Click <strong>Sync SonarCloud</strong> to link them<br/>
-                3. Click <strong>Scan All</strong> to fetch metrics
+              <p style={{ fontSize:15, fontWeight:600, color:'#1a1a18' }}>No code quality data yet</p>
+              <p style={{ marginTop:12, color:'#666', fontSize:13, lineHeight:2 }}>
+                Follow these steps in order:<br/>
+                <strong>1.</strong> Import repos at{' '}
+                <a href="https://sonarcloud.io" target="_blank" rel="noreferrer" style={{ color:'#1B3A6B' }}>sonarcloud.io</a>
+                {' '}(free for public repos)<br/>
+                <strong>2.</strong> Click <strong>Sync SonarCloud</strong> above — links SonarCloud projects to your repos<br/>
+                <strong>3.</strong> Click <strong>Scan All</strong> above — fetches and stores the metrics<br/>
+                <strong>4.</strong> Come back to this tab
               </p>
+              {repos.filter(r => r.sonar_project_key).length > 0 && (
+                <p style={{ marginTop:12, color:'#2D5A0E', fontSize:13 }}>
+                  ✓ {repos.filter(r => r.sonar_project_key).length} repo{repos.filter(r => r.sonar_project_key).length > 1 ? 's' : ''} linked to SonarCloud.
+                  Run <strong>Scan All</strong> to fetch their metrics.
+                </p>
+              )}
             </div>
           ) : (
             <div style={s.qualityGrid}>

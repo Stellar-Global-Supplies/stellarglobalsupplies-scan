@@ -53,7 +53,7 @@ export async function fetchSnykProjects(
 ): Promise<SnykProject[]> {
   // v1 list-projects endpoint — POST with empty body, works with all token types
   const url = `${SNYK_V1}/org/${orgId}/projects`;
-  const res  = await fetch(url, { method: 'POST', headers: headers(token), body: '{}' });
+  const res  = await fetch(url, { method: 'GET', headers: headers(token) });
   if (!res.ok) throw new Error(`Snyk projects fetch failed: ${res.status} ${await res.text()}`);
 
   const body = await res.json<{
