@@ -5,12 +5,11 @@ import { getAllRepos, createScanRun } from '../lib/db';
 export async function handleCron(env: Env, scheduledTime: Date): Promise<void> {
   console.log(`[Cron] SGS scan starting at ${scheduledTime.toISOString()}`);
 
-  const repos    = await getAllRepos(env.DB);
-  const eligible = repos.filter(r => r.snyk_project_id !== null);
+  const repos = await getAllRepos(env.DB);
 
-  console.log(`[Cron] ${eligible.length} repos eligible / ${repos.length - eligible.length} skipped`);
+  console.log(`[Cron] ${repos.length} repos eligible`);
 
-  for (const repo of eligible) {
+  for (const repo of repos) {
     const scanRunId = await createScanRun(env.DB, repo.id, 'cron', 'cron');
 
     const msg: QueueMessage = {
@@ -18,12 +17,11 @@ export async function handleCron(env: Env, scheduledTime: Date): Promise<void> {
       repo_id:         repo.id,
       scan_run_id:     scanRunId,
       triggered_by:    'cron',
-      snyk_project_id: repo.snyk_project_id!,
     };
 
     await env.SCAN_QUEUE.send(msg);
     console.log(`[Cron] Queued: ${repo.name}`);
   }
 
-  console.log(`[Cron] Done — ${eligible.length} repos queued`);
+  console.log(`[Cron] Done — ${repos.length} repos queued`);
 }

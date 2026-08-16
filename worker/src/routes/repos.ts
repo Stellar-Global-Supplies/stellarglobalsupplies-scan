@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
-import { Env, JWTPayload } from '../types';
-import { getAllRepos, getRepo, upsertReposFromSnyk } from '../lib/db';
-import { fetchProjects } from '../lib/snyk';
+import { Env } from '../types';
+import { getAllRepos, getRepo, upsertReposFromGitHub } from '../lib/db';
+import { fetchOrgRepos } from '../lib/github';
 
-const repos = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
+const repos = new Hono<{ Bindings: Env }>();
 
 // GET /api/repos
 repos.get('/', async (c) => {
@@ -27,25 +27,25 @@ repos.get('/:id', async (c) => {
   return c.json({ repo });
 });
 
-// POST /api/repos/sync — pulls all Snyk projects into D1 (no manual seeding needed)
+// POST /api/repos/sync — pulls all GitHub org repos into D1
 repos.post('/sync', async (c) => {
   try {
-    // env.SNYK_API_TOKEN and env.SNYK_ORG_ID are direct strings from [[secrets_store_secrets]]
-    const projects = await fetchProjects(c.env.SNYK_ORG_ID, c.env.SNYK_API_TOKEN);
+    // env.GITHUB_TOKEN is a direct string from [[secrets_store_secrets]]
+    const githubRepos = await fetchOrgRepos('Stellar-Global-Supplies', c.env.GITHUB_TOKEN);
 
-    if (projects.length === 0) {
+    if (githubRepos.length === 0) {
       return c.json({
-        message: 'No GitHub-backed projects found in Snyk org.',
+        message: 'No repos found in GitHub org.',
         synced:  0,
       });
     }
 
-    const result = await upsertReposFromSnyk(c.env.DB, projects);
+    const result = await upsertReposFromGitHub(c.env.DB, githubRepos);
     return c.json({
-      synced:   projects.length,
+      synced:   githubRepos.length,
       inserted: result.inserted,
       updated:  result.updated,
-      message:  `Synced ${projects.length} repos from Snyk into D1.`,
+      message:  `Synced ${githubRepos.length} repos from GitHub into D1.`,
     });
   } catch (err: unknown) {
     return c.json({ error: err instanceof Error ? err.message : 'Sync failed' }, 500);

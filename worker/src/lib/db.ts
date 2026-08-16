@@ -16,28 +16,27 @@ export async function getRepo(db: D1Database, id: string): Promise<Repo | null> 
   return db.prepare('SELECT * FROM repos WHERE id = ?').bind(id).first<Repo>();
 }
 
-export async function upsertReposFromSnyk(
+export async function upsertReposFromGitHub(
   db: D1Database,
-  projects: Array<{ snykProjectId: string; name: string; githubUrl: string }>
+  repos: Array<{ name: string; html_url: string }>
 ): Promise<{ inserted: number; updated: number }> {
   const stmt = db.prepare(`
-    INSERT INTO repos (id, name, github_url, snyk_project_id)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO repos (id, name, github_url)
+    VALUES (?, ?, ?)
     ON CONFLICT (github_url) DO UPDATE SET
-      snyk_project_id = excluded.snyk_project_id,
-      name            = excluded.name
+      name = excluded.name
   `);
 
-  const batch = projects.map(p => {
-    const id = 'repo_' + btoa(p.githubUrl).replace(/[^a-z0-9]/gi, '').slice(0, 16).toLowerCase();
-    return stmt.bind(id, p.name, p.githubUrl, p.snykProjectId);
+  const batch = repos.map(r => {
+    const id = 'repo_' + btoa(r.html_url).replace(/[^a-z0-9]/gi, '').slice(0, 16).toLowerCase();
+    return stmt.bind(id, r.name, r.html_url);
   });
 
   if (batch.length > 0) await db.batch(batch);
 
   const existing = await db.prepare('SELECT COUNT(*) as c FROM repos').first<{ c: number }>();
   const total = existing?.c ?? 0;
-  return { inserted: Math.min(projects.length, total), updated: projects.length - Math.min(projects.length, total) };
+  return { inserted: Math.min(repos.length, total), updated: repos.length - Math.min(repos.length, total) };
 }
 
 // Sync SonarCloud project keys into repos — matched by name
@@ -124,7 +123,7 @@ export async function insertVulnerabilities(
 
   const stmt = db.prepare(`
     INSERT INTO vulnerabilities
-      (id, scan_run_id, repo_id, snyk_issue_id, cve, title, severity,
+      (id, scan_run_id, repo_id, github_alert_id, cve, title, severity,
        package_name, from_version, to_version, fixable, source)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
@@ -133,7 +132,7 @@ export async function insertVulnerabilities(
     vulns.map(v =>
       stmt.bind(
         nanoid(), scanRunId, repoId,
-        v.snyk_issue_id, v.cve, v.title, v.severity,
+        v.github_alert_id, v.cve, v.title, v.severity,
         v.package_name, v.from_version, v.to_version, v.fixable, v.source
       )
     )
@@ -171,8 +170,8 @@ export async function getVulnSummary(db: D1Database) {
   return summary;
 }
 
-export async function updateFixPRUrl(db: D1Database, snykIssueId: string, prUrl: string): Promise<void> {
-  await db.prepare('UPDATE vulnerabilities SET fix_pr_url = ? WHERE snyk_issue_id = ?').bind(prUrl, snykIssueId).run();
+export async function updateFixPRUrl(db: D1Database, githubAlertId: number, prUrl: string): Promise<void> {
+  await db.prepare('UPDATE vulnerabilities SET fix_pr_url = ? WHERE github_alert_id = ?').bind(prUrl, githubAlertId).run();
 }
 
 // ── Code Quality ──────────────────────────────────────────────────────────────

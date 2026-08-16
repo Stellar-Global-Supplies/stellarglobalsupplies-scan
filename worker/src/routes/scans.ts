@@ -1,30 +1,21 @@
 import { Hono } from 'hono';
-import { Env, JWTPayload, QueueMessage } from '../types';
+import { Env, QueueMessage } from '../types';
 import { getAllRepos, getRepo, createScanRun, getRecentScans } from '../lib/db';
 
-const scans = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
+const scans = new Hono<{ Bindings: Env }>();
 
 // POST /api/scans/repo/:id — scan a single repo
 scans.post('/repo/:id', async (c) => {
-  const user = c.get('user');
   const repo = await getRepo(c.env.DB, c.req.param('id'));
   if (!repo) return c.json({ error: 'Repo not found' }, 404);
 
-  if (!repo.snyk_project_id) {
-    return c.json(
-      { error: 'Repo not imported into Snyk yet. Call POST /api/repos/:id/import first.' },
-      400
-    );
-  }
-
-  const scanRunId = await createScanRun(c.env.DB, repo.id, user.sub, 'manual');
+  const scanRunId = await createScanRun(c.env.DB, repo.id, 'manual', 'manual');
 
   const msg: QueueMessage = {
     type:            'scan_repo',
     repo_id:         repo.id,
     scan_run_id:     scanRunId,
-    triggered_by:    user.sub,
-    snyk_project_id: repo.snyk_project_id,
+    triggered_by:    'manual',
   };
 
   await c.env.SCAN_QUEUE.send(msg);
@@ -32,27 +23,19 @@ scans.post('/repo/:id', async (c) => {
   return c.json({ scan_run_id: scanRunId, status: 'queued' });
 });
 
-// POST /api/scans/all — queue all 30 repos for scanning
+// POST /api/scans/all — queue all repos for scanning
 scans.post('/all', async (c) => {
-  const user     = c.get('user');
   const allRepos = await getAllRepos(c.env.DB);
 
   const queued: string[] = [];
-  const skipped: string[] = [];
 
   for (const repo of allRepos) {
-    if (!repo.snyk_project_id) {
-      skipped.push(repo.id);
-      continue;
-    }
-
-    const scanRunId = await createScanRun(c.env.DB, repo.id, user.sub, 'manual');
+    const scanRunId = await createScanRun(c.env.DB, repo.id, 'manual', 'manual');
     const msg: QueueMessage = {
       type:            'scan_repo',
       repo_id:         repo.id,
       scan_run_id:     scanRunId,
-      triggered_by:    user.sub,
-      snyk_project_id: repo.snyk_project_id,
+      triggered_by:    'manual',
     };
 
     await c.env.SCAN_QUEUE.send(msg);
@@ -61,8 +44,7 @@ scans.post('/all', async (c) => {
 
   return c.json({
     queued:  queued.length,
-    skipped: skipped.length,
-    message: `${queued.length} repos queued for scanning. ${skipped.length} skipped (not imported into Snyk).`,
+    message: `${queued.length} repos queued for scanning.`,
   });
 });
 

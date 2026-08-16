@@ -21,22 +21,21 @@ CREATE TABLE IF NOT EXISTS scan_runs (
   error         TEXT
 );
 
--- Vulnerabilities found per scan
 CREATE TABLE IF NOT EXISTS vulnerabilities (
-  id             TEXT PRIMARY KEY,
-  scan_run_id    TEXT NOT NULL REFERENCES scan_runs(id),
-  repo_id        TEXT NOT NULL REFERENCES repos(id),
-  snyk_issue_id  TEXT,
-  cve            TEXT,
-  title          TEXT NOT NULL,
-  severity       TEXT NOT NULL,  
-  package_name   TEXT NOT NULL,
-  from_version   TEXT NOT NULL,
-  to_version     TEXT,          
-  fixable        INTEGER NOT NULL DEFAULT 0,  
-  fix_pr_url     TEXT,
-  source         TEXT NOT NULL DEFAULT 'snyk',
-  created_at     INTEGER NOT NULL DEFAULT (unixepoch())
+  id              TEXT PRIMARY KEY,
+  scan_run_id     TEXT NOT NULL REFERENCES scan_runs(id),
+  repo_id         TEXT NOT NULL REFERENCES repos(id),
+  github_alert_id INTEGER,
+  cve             TEXT,
+  title           TEXT NOT NULL,
+  severity        TEXT NOT NULL,  
+  package_name    TEXT NOT NULL,
+  from_version    TEXT NOT NULL,
+  to_version      TEXT,          
+  fixable         INTEGER NOT NULL DEFAULT 0,  
+  fix_pr_url      TEXT,
+  source          TEXT NOT NULL DEFAULT 'github',
+  created_at      INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE INDEX IF NOT EXISTS idx_vulns_repo      ON vulnerabilities(repo_id);

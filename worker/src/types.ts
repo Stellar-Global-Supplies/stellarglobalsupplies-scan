@@ -5,8 +5,6 @@ export interface Env {
   SCAN_QUEUE:   Queue;
 
   // Secrets — bound individually via [[secrets_store_secrets]] in wrangler.toml
-  SNYK_API_TOKEN:      string;
-  SNYK_ORG_ID:         string;
   GITHUB_TOKEN:        string;
   SONARCLOUD_TOKEN:    string;
   SONARCLOUD_ORG:      string;
@@ -19,7 +17,6 @@ export interface Repo {
   id:                string;
   name:              string;
   github_url:        string;
-  snyk_project_id:   string | null;
   sonar_project_key: string | null;
   last_scanned_at:   number | null;
   created_at:        number;
@@ -38,20 +35,20 @@ export interface ScanRun {
 }
 
 export interface Vulnerability {
-  id:            string;
-  scan_run_id:   string;
-  repo_id:       string;
-  snyk_issue_id: string | null;
-  cve:           string | null;
-  title:         string;
-  severity:      'critical' | 'high' | 'medium' | 'low';
-  package_name:  string;
-  from_version:  string;
-  to_version:    string | null;
-  fixable:       number;
-  fix_pr_url:    string | null;
-  source:        string;
-  created_at:    number;
+  id:              string;
+  scan_run_id:     string;
+  repo_id:         string;
+  github_alert_id: number | null;
+  cve:             string | null;
+  title:           string;
+  severity:        'critical' | 'high' | 'medium' | 'low';
+  package_name:    string;
+  from_version:    string;
+  to_version:      string | null;
+  fixable:         number;
+  fix_pr_url:      string | null;
+  source:          string;
+  created_at:      number;
 }
 
 export interface CodeQuality {
@@ -79,7 +76,6 @@ export interface QueueMessage {
   repo_id:         string;
   scan_run_id:     string;
   triggered_by:    string;
-  snyk_project_id: string;
 }
 
 export interface JWTPayload {
@@ -88,41 +84,4 @@ export interface JWTPayload {
   role:  string;
   exp:   number;
   iat:   number;
-}
-
-export interface SnykIssuesResponse {
-  data:   SnykIssue[];
-  links?: { next?: string };
-}
-
-export interface SnykIssue {
-  id: string;
-  attributes: {
-    title:    string;
-    severity: string;
-    status:   string;
-    coordinates: Array<{
-      representations: Array<{
-        dependency?: {
-          package_name:    string;
-          package_version: string;
-        };
-      }>;
-      remedies: Array<{
-        type: string;
-        details: {
-          upgrade_package?: { new_version: string };
-        };
-      }>;
-    }>;
-    problems: Array<{
-      id:     string;
-      source: string;
-    }>;
-  };
-}
-
-export interface SnykFixResponse {
-  id:  string;
-  url: string;
 }
