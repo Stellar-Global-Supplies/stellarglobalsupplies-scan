@@ -20,76 +20,70 @@ export interface SnykProject {
   githubUrl:     string;
 }
 
+// v1 API issue shape (used by POST /org/:id/project/:id/issues)
 export interface SnykIssue {
-  id: string;
-  attributes: {
-    title:    string;
-    severity: string;
-    status:   string;
-    coordinates: Array<{
-      representations: Array<{
-        dependency?: { package_name: string; package_version: string };
-      }>;
-      remedies: Array<{
-        type:    string;
-        details: { upgrade_package?: { new_version: string } };
-      }>;
-    }>;
-    problems: Array<{ id: string; source: string }>;
+  issueId:   string;
+  pkgName:   string;
+  pkgVersion: string;
+  issueData: {
+    id:          string;
+    title:       string;
+    severity:    string;
+    cvssScore:   number;
+    identifiers: { CVE?: string[]; CWE?: string[] };
+    isUpgradable: boolean;
+    isPatchable:  boolean;
+  };
+  fixInfo: {
+    upgradePaths: Array<{ isUpgradable: boolean; upgradeTo?: string }>;
+    isPatchable:  boolean;
+    isUpgradable: boolean;
+    nearestFixedInVersion?: string;
   };
 }
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
-// Fetch all active projects already in your Snyk org (handles pagination)
-// Since you already have repos in Snyk, no import step needed
+// Fetch all active projects already in your Snyk org using the v1 API.
+// The REST API (api.snyk.io/rest) returns 403 for legacy API tokens on project
+// listing. The v1 endpoint works with all token types including legacy tokens.
 export async function fetchSnykProjects(
   orgId: string,
   token: string
 ): Promise<SnykProject[]> {
+  // v1 list-projects endpoint — POST with empty body, works with all token types
+  const url = `${SNYK_V1}/org/${orgId}/projects`;
+  const res  = await fetch(url, { method: 'POST', headers: headers(token), body: '{}' });
+  if (!res.ok) throw new Error(`Snyk projects fetch failed: ${res.status} ${await res.text()}`);
+
+  const body = await res.json<{
+    projects: Array<{
+      id:            string;
+      name:          string;
+      origin:        string;
+      remoteRepoUrl?: string;
+    }>;
+  }>();
+
   const projects: SnykProject[] = [];
-  let url: string | null =
-    `${SNYK_REST}/orgs/${orgId}/projects?version=${SNYK_VER}&limit=100&status=active`;
 
-  while (url) {
-    const res = await fetch(url, { headers: headers(token) });
-    if (!res.ok) throw new Error(`Snyk projects fetch failed: ${res.status} ${await res.text()}`);
+  for (const p of body.projects) {
+    // Only keep GitHub-backed projects
+    if (p.origin !== 'github') continue;
 
-    const body = await res.json<{
-      data: Array<{
-        id: string;
-        attributes: {
-          name:   string;
-          target: { display_name: string; url: string };
-        };
-      }>;
-      links?: { next?: string };
-    }>();
+    // remoteRepoUrl is the canonical GitHub HTTPS URL Snyk stores
+    let githubUrl = (p.remoteRepoUrl ?? '').replace(/\.git$/, '');
+    if (!githubUrl.includes('github.com')) continue;
 
-    for (const p of body.data) {
-      const rawUrl = p.attributes.target?.url ?? '';
-      if (!rawUrl.includes('github.com')) continue;  // skip non-GitHub projects
-
-      // Snyk can return SSH URLs like git@github.com:Org/repo.git
-      // or HTTPS like https://github.com/Org/repo — normalise to HTTPS.
-      let githubUrl = rawUrl.replace(/\.git$/, '');
-      if (githubUrl.startsWith('git@github.com:')) {
-        githubUrl = 'https://github.com/' + githubUrl.slice('git@github.com:'.length);
-      }
-
-      // display_name is usually just the repo name (e.g. "stellarglobalsupplies-ai")
-      const repoName = p.attributes.target?.display_name
-        ?? p.attributes.name.split(':')[0].split('/').pop()
-        ?? p.attributes.name;
-
-      projects.push({
-        snykProjectId: p.id,
-        name:          repoName,
-        githubUrl,
-      });
+    // Normalise SSH → HTTPS just in case
+    if (githubUrl.startsWith('git@github.com:')) {
+      githubUrl = 'https://github.com/' + githubUrl.slice('git@github.com:'.length);
     }
 
-    url = body.links?.next ?? null;
+    // Project name is usually "org/repo:manifest" — strip to just the repo slug
+    const repoName = p.name.split(':')[0].split('/').pop() ?? p.name;
+
+    projects.push({ snykProjectId: p.id, name: repoName, githubUrl });
   }
 
   // Deduplicate by githubUrl — one repo can have multiple Snyk projects
@@ -110,16 +104,17 @@ export async function fetchSnykIssues(
   projectId: string
 ): Promise<SnykIssue[]> {
   const issues: SnykIssue[] = [];
-  let url: string | null =
-    `${SNYK_REST}/orgs/${orgId}/issues?version=${SNYK_VER}&project_id=${projectId}&status=open&limit=100`;
+  // v1 issues endpoint — works with legacy tokens, returns vuln + license issues
+  const url = `${SNYK_V1}/org/${orgId}/project/${projectId}/issues`;
+  const res  = await fetch(url, {
+    method:  'POST',
+    headers: headers(token),
+    body:    JSON.stringify({ filters: { severities: ['critical','high','medium','low'], types: ['vuln'], ignored: false, patched: false } }),
+  });
+  if (!res.ok) throw new Error(`Snyk issues fetch failed: ${res.status} ${await res.text()}`);
 
-  while (url) {
-    const res = await fetch(url, { headers: headers(token) });
-    if (!res.ok) throw new Error(`Snyk issues fetch failed: ${res.status} ${await res.text()}`);
-    const body = await res.json<{ data: SnykIssue[]; links?: { next?: string } }>();
-    issues.push(...body.data);
-    url = body.links?.next ?? null;
-  }
+  const body = await res.json<{ issues: { vulnerabilities: SnykIssue[] } }>();
+  issues.push(...(body.issues?.vulnerabilities ?? []));
 
   return issues;
 }
@@ -146,20 +141,21 @@ export async function createSnykFixPR(
 // ── Parser ────────────────────────────────────────────────────────────────────
 
 export function parseSnykIssue(issue: SnykIssue) {
-  const coord  = issue.attributes.coordinates?.[0];
-  const dep    = coord?.representations?.[0]?.dependency;
-  const remedy = coord?.remedies?.[0];
-  const cve    = issue.attributes.problems?.find(p => p.source === 'CVE')?.id ?? null;
+  const cve       = issue.issueData.identifiers?.CVE?.[0] ?? null;
+  const fixable   = issue.fixInfo.isUpgradable || issue.fixInfo.isPatchable ? 1 : 0;
+  const toVersion = issue.fixInfo.nearestFixedInVersion
+    ?? issue.fixInfo.upgradePaths?.[0]?.upgradeTo
+    ?? null;
 
   return {
-    snyk_issue_id: issue.id,
+    snyk_issue_id: issue.issueId,
     cve,
-    title:        issue.attributes.title,
-    severity:     issue.attributes.severity as 'critical' | 'high' | 'medium' | 'low',
-    package_name: dep?.package_name  ?? 'unknown',
-    from_version: dep?.package_version ?? 'unknown',
-    to_version:   remedy?.details?.upgrade_package?.new_version ?? null,
-    fixable:      remedy?.type === 'upgrade' ? 1 : 0,
+    title:        issue.issueData.title,
+    severity:     issue.issueData.severity as 'critical' | 'high' | 'medium' | 'low',
+    package_name: issue.pkgName,
+    from_version: issue.pkgVersion,
+    to_version:   toVersion,
+    fixable,
     source:       'snyk',
   };
 }
