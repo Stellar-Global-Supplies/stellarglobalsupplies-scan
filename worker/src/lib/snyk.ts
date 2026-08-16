@@ -44,42 +44,47 @@ export interface SnykIssue {
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
-// Fetch all active projects already in your Snyk org using the v1 API.
-// The v1 GET /org/:id/projects endpoint was deprecated and returns 410 Gone.
-// The correct call is POST /org/:id/projects (with empty JSON body).
-// The REST API (api.snyk.io/rest) returns 403 for legacy API tokens on project
-// listing. The v1 POST endpoint works with all token types including legacy tokens.
+// Fetch all active projects in your Snyk org using the REST API.
+// The v1 /org/:id/projects endpoint is fully deprecated — returns 410 Gone.
+// The REST API uses the same "token <value>" Authorization header.
 export async function fetchSnykProjects(
   orgId: string,
   token: string
 ): Promise<SnykProject[]> {
-  // v1 list-projects endpoint — POST with empty body, works with all token types
-  // NOTE: GET was deprecated (returns 410); POST is the correct method.
-  const url = `${SNYK_V1}/org/${orgId}/projects`;
-  const res  = await fetch(url, {
-    method:  'POST',
-    headers: headers(token),
-    body:    JSON.stringify({}),
-  });
-  if (!res.ok) throw new Error(`Snyk projects fetch failed: ${res.status} ${await res.text()}`);
 
-  const body = await res.json<{
-    projects: Array<{
-      id:            string;
-      name:          string;
-      origin:        string;
-      remoteRepoUrl?: string;
-    }>;
-  }>();
+  const allData: Array<{
+    id: string;
+    attributes: { name: string; origin: string; remoteRepoUrl?: string };
+  }> = [];
+
+  // REST API uses cursor-based pagination via links.next
+  let nextUrl: string | null =
+    `${SNYK_REST}/orgs/${orgId}/projects?version=${SNYK_VER}&limit=100&status=active`;
+
+  while (nextUrl) {
+    const res = await fetch(nextUrl, { headers: headers(token) });
+    if (!res.ok) throw new Error(`Snyk projects fetch failed: ${res.status} ${await res.text()}`);
+
+    const body = await res.json<{
+      data: Array<{
+        id: string;
+        attributes: { name: string; origin: string; remoteRepoUrl?: string };
+      }>;
+      links?: { next?: string };
+    }>();
+
+    allData.push(...(body.data ?? []));
+    nextUrl = body.links?.next ?? null;
+  }
 
   const projects: SnykProject[] = [];
 
-  for (const p of body.projects) {
+  for (const p of allData) {
     // Only keep GitHub-backed projects
-    if (p.origin !== 'github') continue;
+    if (p.attributes.origin !== 'github') continue;
 
     // remoteRepoUrl is the canonical GitHub HTTPS URL Snyk stores
-    let githubUrl = (p.remoteRepoUrl ?? '').replace(/\.git$/, '');
+    let githubUrl = (p.attributes.remoteRepoUrl ?? '').replace(/\.git$/, '');
     if (!githubUrl.includes('github.com')) continue;
 
     // Normalise SSH → HTTPS just in case
@@ -88,7 +93,7 @@ export async function fetchSnykProjects(
     }
 
     // Project name is usually "org/repo:manifest" — strip to just the repo slug
-    const repoName = p.name.split(':')[0].split('/').pop() ?? p.name;
+    const repoName = p.attributes.name.split(':')[0].split('/').pop() ?? p.attributes.name;
 
     projects.push({ snykProjectId: p.id, name: repoName, githubUrl });
   }
@@ -111,7 +116,7 @@ export async function fetchSnykIssues(
   projectId: string
 ): Promise<SnykIssue[]> {
   const issues: SnykIssue[] = [];
-  // v1 issues endpoint — works with legacy tokens, returns vuln + license issues
+  // v1 issues endpoint — still works with legacy tokens, returns vuln + license issues
   const url = `${SNYK_V1}/org/${orgId}/project/${projectId}/issues`;
   const res  = await fetch(url, {
     method:  'POST',
