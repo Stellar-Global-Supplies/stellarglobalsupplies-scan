@@ -37,7 +37,11 @@ export async function handleQueue(
       const url = new URL(repo.github_url);
       const [, owner, repoName] = url.pathname.split('/');
 
-      const allVulns: ReturnType<typeof parseDependabotAlert>[] = [];
+      const allVulns: Array<
+        ReturnType<typeof parseDependabotAlert> |
+        ReturnType<typeof parseCodeScanningAlert> |
+        ReturnType<typeof parseSnykIssue>
+      > = [];
 
       // ── 1. GitHub Dependabot — dependency CVEs (free, public repos) ───────
       try {

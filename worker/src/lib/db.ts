@@ -23,13 +23,22 @@ export async function upsertReposFromGitHub(
   const stmt = db.prepare(`
     INSERT INTO repos (id, name, github_url)
     VALUES (?, ?, ?)
+    ON CONFLICT (id)       DO UPDATE SET name = excluded.name, github_url = excluded.github_url
     ON CONFLICT (github_url) DO UPDATE SET name = excluded.name
   `);
 
-  const batch = repos.map(r => {
-    const id = 'repo_' + btoa(r.html_url).replace(/[^a-z0-9]/gi, '').slice(0, 16).toLowerCase();
+  const batch = await Promise.all(repos.map(async r => {
+    // Use a SHA-256 digest of the URL for a stable, collision-resistant ID.
+    // We take the first 16 hex chars (64 bits of entropy) — far safer than
+    // the old btoa approach which collapsed many URLs to the same suffix.
+    const urlBytes = new TextEncoder().encode(r.html_url);
+    const hashBuf  = await crypto.subtle.digest('SHA-256', urlBytes);
+    const hashHex  = Array.from(new Uint8Array(hashBuf))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+    const id = 'repo_' + hashHex.slice(0, 16);
     return stmt.bind(id, r.name, r.html_url);
-  });
+  }));
 
   if (batch.length > 0) await db.batch(batch);
 
@@ -132,8 +141,8 @@ export async function insertVulnerabilities(
   scanRunId: string,
   repoId: string,
   vulns: Array<{
-    github_alert_id?: number | null;
-    snyk_issue_id?:   string | null;
+    github_alert_id?: number | null | undefined;
+    snyk_issue_id?:   string | null | undefined;
     cve:              string | null;
     title:            string;
     severity:         string;

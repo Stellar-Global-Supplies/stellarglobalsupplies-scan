@@ -20,11 +20,12 @@ quality.get('/:repoId/history', async (c) => {
 // POST /api/quality/sync — match SonarCloud projects → D1 repos
 quality.post('/sync', async (c) => {
   try {
-    // env.SONARCLOUD_ORG and env.SONARCLOUD_TOKEN are direct strings
-    const sonarProjects = await fetchSonarProjects(
-      c.env.SONARCLOUD_ORG,
-      c.env.SONARCLOUD_TOKEN
-    );
+    // SONARCLOUD_ORG and SONARCLOUD_TOKEN are SecretBinding objects — must call .get()
+    const [sonarOrg, sonarToken] = await Promise.all([
+      c.env.SONARCLOUD_ORG.get(),
+      c.env.SONARCLOUD_TOKEN.get(),
+    ]);
+    const sonarProjects = await fetchSonarProjects(sonarOrg, sonarToken);
 
     if (sonarProjects.length === 0) {
       return c.json({
