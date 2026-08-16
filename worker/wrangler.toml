@@ -11,7 +11,7 @@ head_sampling_rate = 1
 [[d1_databases]]
 binding       = "DB"
 database_name = "scan-db"
-database_id   = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id   = "7326e870-5056-4bb1-88a8-34bd8374bd18"
 # wrangler d1 create scan-db
 
 # ── Cloudflare Queues ──────────────────────────────────────────────────────────
