@@ -25,11 +25,6 @@ export const api = {
       req<{ synced: number; inserted: number; updated: number; message: string }>(
         'POST', '/api/repos/sync'
       ),
-    // Match existing Snyk projects to repos already in D1
-    syncFromSnyk: () =>
-      req<{ found: number; synced: number; message: string }>(
-        'POST', '/api/repos/snyk-sync'
-      ),
   },
 
   scans: {
@@ -51,29 +46,16 @@ export const api = {
       return req<{ vulnerabilities: Vulnerability[] }>('GET', `/api/vulns${params ? `?${params}` : ''}`);
     },
     summary: () => req<{ summary: VulnSummary }>('GET', '/api/vulns/summary'),
-    fix: (repoId: string, issueIds: string[]) =>
-      req<{ pr_url: string; message: string }>('POST', '/api/vulns/fix', {
-        repo_id:   repoId,
-        issue_ids: issueIds,
-      }),
-  },
-
-  quality: {
-    all: () => req<{ quality: CodeQuality[] }>('GET', '/api/quality'),
-    history: (repoId: string) => req<{ history: CodeQuality[] }>('GET', `/api/quality/${repoId}/history`),
-    sync: () => req<{ found: number; synced: number; message: string }>('POST', '/api/quality/sync'),
   },
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface RepoWithStatus {
-  id:               string;
-  name:             string;
-  github_url:       string;
-  snyk_project_id:  string | null;
-  sonar_project_key: string | null;
-  last_scanned_at:  number | null;
+  id:              string;
+  name:            string;
+  github_url:      string;
+  last_scanned_at: number | null;
   latest_scan: {
     status:      string;
     finished_at: number | null;
@@ -94,21 +76,19 @@ export interface ScanRun {
 }
 
 export interface Vulnerability {
-  id:            string;
-  scan_run_id:   string;
-  repo_id:       string;
-  repo_name?:    string;
-  snyk_issue_id: string | null;
-  cve:           string | null;
-  title:         string;
-  severity:      'critical' | 'high' | 'medium' | 'low';
-  package_name:  string;
-  from_version:  string;
-  to_version:    string | null;
-  fixable:       number;
-  fix_pr_url:    string | null;
-  source:        string;
-  created_at:    number;
+  id:           string;
+  scan_run_id:  string;
+  repo_id:      string;
+  repo_name?:   string;
+  cve:          string | null;
+  title:        string;
+  severity:     'critical' | 'high' | 'medium' | 'low';
+  package_name: string;
+  from_version: string;
+  to_version:   string | null;
+  fixable:      number;
+  source:       string;  // 'github_dependabot' | 'github_code_scanning'
+  created_at:   number;
 }
 
 export interface VulnSummary {
@@ -116,25 +96,4 @@ export interface VulnSummary {
   high:     number;
   medium:   number;
   low:      number;
-}
-
-// NEW
-export interface CodeQuality {
-  id:                     string;
-  repo_id:                string;
-  repo_name?:             string;
-  scan_run_id:            string;
-  sonar_project_key:      string;
-  reliability_rating:     string | null;
-  maintainability_rating: string | null;
-  security_rating:        string | null;
-  code_smells:            number | null;
-  duplicated_lines_pct:   number | null;
-  complexity:             number | null;
-  cognitive_complexity:   number | null;
-  coverage_pct:           number | null;
-  lines_of_code:          number | null;
-  security_hotspots:      number | null;
-  technical_debt_mins:    number | null;
-  created_at:             number;
 }

@@ -10,24 +10,18 @@ export interface Env {
 
   // Secrets — bound via [[secrets_store_secrets]] in wrangler.toml
   // Usage: const token = await env.GITHUB_TOKEN.get()
-  GITHUB_TOKEN:     SecretBinding;
-  SONARCLOUD_TOKEN: SecretBinding;
-  SONARCLOUD_ORG:   SecretBinding;
-  SNYK_API_TOKEN:   SecretBinding;  // NEW
-  SNYK_ORG_ID:      SecretBinding;  // NEW
+  GITHUB_TOKEN: SecretBinding;
 
   // Plain vars from [vars] — still regular strings
   FRONTEND_URL: string;
 }
 
 export interface Repo {
-  id:                string;
-  name:              string;
-  github_url:        string;
-  snyk_project_id:   string | null;   // populated by POST /api/repos/snyk-sync
-  sonar_project_key: string | null;
-  last_scanned_at:   number | null;
-  created_at:        number;
+  id:              string;
+  name:            string;
+  github_url:      string;
+  last_scanned_at: number | null;
+  created_at:      number;
 }
 
 export interface ScanRun {
@@ -47,7 +41,6 @@ export interface Vulnerability {
   scan_run_id:     string;
   repo_id:         string;
   github_alert_id: number | null;
-  snyk_issue_id:   string | null;   // NEW — for fix PR lookup
   cve:             string | null;
   title:           string;
   severity:        'critical' | 'high' | 'medium' | 'low';
@@ -55,29 +48,8 @@ export interface Vulnerability {
   from_version:    string;
   to_version:      string | null;
   fixable:         number;
-  fix_pr_url:      string | null;
-  source:          string;
+  source:          string;  // 'github_dependabot' | 'github_code_scanning'
   created_at:      number;
-}
-
-export interface CodeQuality {
-  id:                     string;
-  repo_id:                string;
-  scan_run_id:            string;
-  source:                 string;
-  sonar_project_key:      string;
-  reliability_rating:     string | null;
-  maintainability_rating: string | null;
-  security_rating:        string | null;
-  code_smells:            number | null;
-  duplicated_lines_pct:   number | null;
-  complexity:             number | null;
-  cognitive_complexity:   number | null;
-  coverage_pct:           number | null;
-  lines_of_code:          number | null;
-  security_hotspots:      number | null;
-  technical_debt_mins:    number | null;
-  created_at:             number;
 }
 
 export interface QueueMessage {

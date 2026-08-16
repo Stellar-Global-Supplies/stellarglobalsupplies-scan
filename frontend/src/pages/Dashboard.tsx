@@ -1,23 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { api, RepoWithStatus, Vulnerability, VulnSummary, CodeQuality } from '../lib/api';
+import { api, RepoWithStatus, Vulnerability, VulnSummary } from '../lib/api';
 import RepoCard    from '../components/RepoCard';
 import VulnTable   from '../components/VulnTable';
-import QualityCard from '../components/QualityCard';   // NEW
 
-type Tab = 'repos' | 'vulns' | 'quality';
+type Tab = 'repos' | 'vulns';
 
 export default function Dashboard() {
   const [tab,      setTab]      = useState<Tab>('repos');
   const [repos,    setRepos]    = useState<RepoWithStatus[]>([]);
   const [vulns,    setVulns]    = useState<Vulnerability[]>([]);
-  const [quality,  setQuality]  = useState<CodeQuality[]>([]);
   const [summary,  setSummary]  = useState<VulnSummary>({ critical:0, high:0, medium:0, low:0 });
   const [loading,  setLoading]  = useState(true);
   const [scanning,   setScanning]   = useState(false);
-  const [syncing,    setSyncing]    = useState(false);
   const [githubSync, setGithubSync] = useState(false);
-  const [sonarSync,  setSonarSync]  = useState(false);
   const [error,    setError]    = useState<string | null>(null);
 
   // Vuln filters
@@ -25,9 +21,6 @@ export default function Dashboard() {
   const [fixFilter,    setFixFilter]    = useState('all');
   const [repoFilter,   setRepoFilter]   = useState('all');
   const [sourceFilter, setSourceFilter] = useState('all');
-
-  // Quality filters
-  const [qualityFilter, setQualityFilter] = useState('all');  // A|B|C|D|E|all
 
   const loadData = useCallback(async () => {
     try {
@@ -54,19 +47,13 @@ export default function Dashboard() {
     setVulns(res.vulnerabilities);
   }, [sevFilter, fixFilter, repoFilter, sourceFilter]);
 
-  const loadQuality = useCallback(async () => {
-    const res = await api.quality.all();
-    setQuality(res.quality);
-  }, []);
-
   useEffect(() => { loadData(); }, [loadData]);
 
   useEffect(() => {
-    if (tab === 'vulns')   loadVulns();
-    if (tab === 'quality') loadQuality();
-  }, [tab, loadVulns, loadQuality]);
+    if (tab === 'vulns') loadVulns();
+  }, [tab, loadVulns]);
 
-  // Poll while scans are active; once they finish also reload quality + vulns
+  // Poll while scans are active; reload vulns too so the table stays live
   useEffect(() => {
     const hasActive = repos.some(r =>
       r.latest_scan?.status === 'queued' || r.latest_scan?.status === 'scanning'
@@ -75,14 +62,10 @@ export default function Dashboard() {
 
     const timer = setInterval(async () => {
       await loadData();
-      // After loadData repos state will update on next render; the side-effect
-      // below handles the transition. Proactively reload quality + vulns on
-      // every poll tick while scans are running so the quality tab stays live.
-      loadQuality();
       loadVulns();
     }, 4000);
     return () => clearInterval(timer);
-  }, [repos, loadData, loadQuality, loadVulns]);
+  }, [repos, loadData, loadVulns]);
 
   async function syncFromGitHub() {
     setGithubSync(true);
@@ -97,53 +80,13 @@ export default function Dashboard() {
     }
   }
 
-  async function syncFromSnyk() {
-    setSyncing(true);
-    try {
-      const res = await api.repos.syncFromSnyk();
-      await loadData();
-      alert(res.message);
-    } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Sync failed');
-    } finally {
-      setSyncing(false);
-    }
-  }
-
-  async function syncSonarCloud() {
-    setSonarSync(true);
-    try {
-      const res = await api.quality.sync();
-      // Reload repos so sonar_project_key fields are fresh (affects missing-sonar banner)
-      await loadData();
-      await loadQuality();
-      if (res.synced === 0) {
-        alert(
-          `${res.message}\n\n` +
-          `No repos were matched.\n\n` +
-          `Make sure repos are imported at sonarcloud.io first, then try again.\n` +
-          `Project keys must contain the repo name (e.g. "org_reponame").`
-        );
-      } else {
-        alert(`${res.message}\n\nNow click ⚡ Scan All to fetch quality metrics for the linked repos.`);
-        setTab('quality');
-      }
-    } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'SonarCloud sync failed');
-    } finally {
-      setSonarSync(false);
-    }
-  }
-
   async function scanAll() {
     setScanning(true);
     try {
       const res = await api.scans.scanAll();
-      // Reload repo list so polling detects the queued status and starts
       await loadData();
-      // Switch to quality tab so user sees results populate automatically
-      setTab('quality');
-      alert(res.message + '\n\nSwitching to Code Quality tab — results will appear as scans complete.');
+      setTab('vulns');
+      alert(res.message + '\n\nSwitching to Vulnerabilities tab — results will appear as scans complete.');
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : 'Scan failed');
     } finally {
@@ -160,28 +103,16 @@ export default function Dashboard() {
     }
   }
 
-  async function fixVuln(repoId: string, issueId: string) {
-    try {
-      const res = await api.vulns.fix(repoId, [issueId]);
-      alert(`Fix PR created: ${res.pr_url}`);
-      await loadVulns();
-    } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Fix PR failed');
-    }
-  }
-
   async function signOut() {
     await supabase.auth.signOut();
     window.location.href = '/';
   }
 
-  if (loading || syncing) return (
+  if (loading) return (
     <div style={s.center}>
       <div style={{ textAlign:'center' }}>
         <div style={{ fontSize:32, marginBottom:12 }}>🛡️</div>
-        <p style={{ color:'#888', fontSize:14 }}>
-          {syncing ? 'Syncing repositories from Snyk…' : 'Loading…'}
-        </p>
+        <p style={{ color:'#888', fontSize:14 }}>Loading…</p>
       </div>
     </div>
   );
@@ -189,18 +120,6 @@ export default function Dashboard() {
   if (error) return <div style={s.center}><p style={{ color:'red' }}>{error}</p></div>;
 
   const totalIssues = summary.critical + summary.high + summary.medium + summary.low;
-
-  // Quality filtered list
-  const filteredQuality = qualityFilter === 'all'
-    ? quality
-    : quality.filter(q =>
-        q.reliability_rating     === qualityFilter ||
-        q.maintainability_rating === qualityFilter ||
-        q.security_rating        === qualityFilter
-      );
-
-  // Repos missing SonarCloud project key
-  const missingsonar = repos.filter(r => !r.sonar_project_key).length;
 
   return (
     <div style={s.page}>
@@ -211,7 +130,7 @@ export default function Dashboard() {
             <span style={s.brandIcon}>🛡️</span>
             <div>
               <h1 style={s.title}>Stellar Global Supplies</h1>
-              <p style={s.subtitle}>Security & Code Quality · scan.stellarglobalsupplies.com</p>
+              <p style={s.subtitle}>Security Scanning · scan.stellarglobalsupplies.com</p>
             </div>
           </div>
         </div>
@@ -219,14 +138,6 @@ export default function Dashboard() {
           <button onClick={syncFromGitHub} disabled={githubSync} style={s.syncBtn}
             title="Pull latest repos from GitHub org into the database">
             {githubSync ? '⏳ Syncing…' : '🐙 Sync GitHub'}
-          </button>
-          <button onClick={syncSonarCloud} disabled={sonarSync} style={s.sonarBtn}
-            title="Match SonarCloud projects to repos in D1">
-            {sonarSync ? '⏳ Syncing…' : '📊 Sync SonarCloud'}
-          </button>
-          <button onClick={syncFromSnyk} disabled={syncing} style={s.syncBtn}
-            title="Match Snyk projects to repos in D1 (enables Fix PRs)">
-            {syncing ? '⏳ Syncing…' : '🔄 Sync Snyk'}
           </button>
           <button onClick={scanAll} disabled={scanning} style={s.scanAllBtn}>
             {scanning ? '⏳ Queuing…' : '⚡ Scan All'}
@@ -254,15 +165,14 @@ export default function Dashboard() {
 
       {/* Cron notice */}
       <div style={s.cronBadge}>
-        🕐 Auto-scan: daily 06:00 UTC (Snyk vulns) + 18:00 UTC (Snyk + SonarCloud quality) · Cloudflare cron
+        🕐 Auto-scan: daily 06:00 UTC + 18:00 UTC · GitHub Dependabot + Code Scanning · Cloudflare cron
       </div>
 
       {/* ── Tabs ────────────────────────────────────────────────────────────── */}
       <div style={s.tabs}>
         {([
-          { key:'repos',   label:`Repositories (${repos.length})` },
-          { key:'vulns',   label:`Vulnerabilities (${totalIssues})` },
-          { key:'quality', label:`Code Quality (${quality.length})` },
+          { key:'repos', label:`Repositories (${repos.length})` },
+          { key:'vulns', label:`Vulnerabilities (${totalIssues})` },
         ] as { key: Tab; label: string }[]).map(t => (
           <button
             key={t.key}
@@ -276,20 +186,11 @@ export default function Dashboard() {
 
       {/* ── Repos tab ───────────────────────────────────────────────────────── */}
       {tab === 'repos' && (
-        <>
-          {missingsonar > 0 && (
-            <div style={s.warnBanner}>
-              ⚠ {missingsonar} repo{missingsonar > 1 ? 's' : ''} not linked to SonarCloud yet.
-              Click <strong>Sync SonarCloud</strong> above after importing them at{' '}
-              <a href="https://sonarcloud.io" target="_blank" rel="noreferrer">sonarcloud.io</a>.
-            </div>
-          )}
-          <div style={s.repoGrid}>
-            {repos.map(repo => (
-              <RepoCard key={repo.id} repo={repo} onScan={() => scanOne(repo.id)} />
-            ))}
-          </div>
-        </>
+        <div style={s.repoGrid}>
+          {repos.map(repo => (
+            <RepoCard key={repo.id} repo={repo} onScan={() => scanOne(repo.id)} />
+          ))}
+        </div>
       )}
 
       {/* ── Vulns tab ───────────────────────────────────────────────────────── */}
@@ -310,7 +211,6 @@ export default function Dashboard() {
             </select>
             <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)} style={s.select}>
               <option value="all">All sources</option>
-              <option value="snyk">Snyk</option>
               <option value="github_dependabot">Dependabot</option>
               <option value="github_code_scanning">Code Scanning</option>
             </select>
@@ -320,54 +220,7 @@ export default function Dashboard() {
             </select>
             <button onClick={loadVulns} style={s.refreshBtn}>↻ Refresh</button>
           </div>
-          <VulnTable vulns={vulns} onFix={fixVuln} />
-        </>
-      )}
-
-      {/* ── Quality tab ─────────────────────────────────────────────────────── */}
-      {tab === 'quality' && (
-        <>
-          <div style={s.filters}>
-            <select value={qualityFilter} onChange={e => setQualityFilter(e.target.value)} style={s.select}>
-              <option value="all">All ratings</option>
-              <option value="A">A — Excellent</option>
-              <option value="B">B — Good</option>
-              <option value="C">C — Fair</option>
-              <option value="D">D — Poor</option>
-              <option value="E">E — Critical</option>
-            </select>
-            <button onClick={loadQuality} style={s.refreshBtn}>↻ Refresh</button>
-            <span style={s.qualityNote}>
-              Ratings: A (best) → E (worst) · Powered by SonarCloud
-            </span>
-          </div>
-
-          {filteredQuality.length === 0 ? (
-            <div style={s.emptyQuality}>
-              <p style={{ fontSize:15, fontWeight:600, color:'#1a1a18' }}>No code quality data yet</p>
-              <p style={{ marginTop:12, color:'#666', fontSize:13, lineHeight:2 }}>
-                Follow these steps in order:<br/>
-                <strong>1.</strong> Import repos at{' '}
-                <a href="https://sonarcloud.io" target="_blank" rel="noreferrer" style={{ color:'#1B3A6B' }}>sonarcloud.io</a>
-                {' '}(free for public repos)<br/>
-                <strong>2.</strong> Click <strong>Sync SonarCloud</strong> above — links SonarCloud projects to your repos<br/>
-                <strong>3.</strong> Click <strong>Scan All</strong> above — fetches and stores the metrics<br/>
-                <strong>4.</strong> Come back to this tab
-              </p>
-              {repos.filter(r => r.sonar_project_key).length > 0 && (
-                <p style={{ marginTop:12, color:'#2D5A0E', fontSize:13 }}>
-                  ✓ {repos.filter(r => r.sonar_project_key).length} repo{repos.filter(r => r.sonar_project_key).length > 1 ? 's' : ''} linked to SonarCloud.
-                  Run <strong>Scan All</strong> to fetch their metrics.
-                </p>
-              )}
-            </div>
-          ) : (
-            <div style={s.qualityGrid}>
-              {filteredQuality.map(q => (
-                <QualityCard key={q.id} quality={q} />
-              ))}
-            </div>
-          )}
+          <VulnTable vulns={vulns} />
         </>
       )}
     </div>
@@ -383,7 +236,6 @@ const s: Record<string, React.CSSProperties> = {
   headerRight: { display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' },
   title:       { fontSize:20, fontWeight:600, margin:'0 0 2px', color:'#1B3A6B' },
   subtitle:    { fontSize:12, color:'#888', margin:0 },
-  sonarBtn:    { padding:'7px 12px', background:'#fff', color:'#1B3A6B', border:'1px solid #1B3A6B', borderRadius:8, fontSize:12, fontWeight:500, cursor:'pointer' },
   syncBtn:     { padding:'7px 12px', background:'#f5f5f0', color:'#555', border:'0.5px solid #ddd', borderRadius:8, fontSize:12, cursor:'pointer' },
   scanAllBtn:  { padding:'7px 14px', background:'#1B3A6B', color:'#fff', border:'none', borderRadius:8, fontSize:12, fontWeight:500, cursor:'pointer' },
   signOutBtn:  { padding:'7px 10px', background:'transparent', border:'0.5px solid #ddd', borderRadius:8, fontSize:12, cursor:'pointer', color:'#888' },
@@ -396,11 +248,7 @@ const s: Record<string, React.CSSProperties> = {
   tab:         { padding:'8px 18px', background:'none', border:'none', borderBottom:'2px solid transparent', fontSize:13, cursor:'pointer', color:'#888' },
   tabActive:   { padding:'8px 18px', background:'none', border:'none', borderBottom:'2px solid #1B3A6B', fontSize:13, cursor:'pointer', color:'#1B3A6B', fontWeight:600 },
   repoGrid:    { display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))', gap:10 },
-  qualityGrid: { display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))', gap:10 },
   filters:     { display:'flex', gap:8, marginBottom:'1rem', flexWrap:'wrap', alignItems:'center' },
   select:      { padding:'6px 10px', border:'0.5px solid #ddd', borderRadius:8, fontSize:13, background:'#fff', cursor:'pointer' },
   refreshBtn:  { padding:'6px 12px', border:'0.5px solid #ddd', borderRadius:8, fontSize:13, cursor:'pointer', background:'#fff' },
-  qualityNote: { fontSize:12, color:'#888', marginLeft:4 },
-  warnBanner:  { background:'#FFFBEB', border:'0.5px solid #FDE68A', borderRadius:8, padding:'10px 14px', fontSize:13, color:'#92400E', marginBottom:'1rem' },
-  emptyQuality:{ padding:'3rem', textAlign:'center', color:'#888', background:'#fff', borderRadius:10, border:'0.5px solid #e8e8e0', lineHeight:2 },
 };

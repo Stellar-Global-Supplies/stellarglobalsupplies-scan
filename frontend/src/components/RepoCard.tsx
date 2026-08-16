@@ -55,9 +55,6 @@ export default function RepoCard({ repo, onScan }: Props) {
         {scan?.vuln_count !== undefined && scan.vuln_count > 0 && (
           <span style={s.vulnCount}>{scan.vuln_count} issues</span>
         )}
-        {!repo.snyk_project_id && (
-          <span style={s.notImported} title="Sync Snyk to enable Fix PRs">⚠ Snyk not linked</span>
-        )}
       </div>
 
       <button

@@ -1,8 +1,7 @@
 import { Vulnerability } from '../lib/api';
 
 interface Props {
-  vulns:  Vulnerability[];
-  onFix:  (repoId: string, issueId: string) => void;
+  vulns: Vulnerability[];
 }
 
 const SEV_COLOR: Record<string, { bg: string; color: string }> = {
@@ -19,7 +18,7 @@ function ago(ts: number): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-export default function VulnTable({ vulns, onFix }: Props) {
+export default function VulnTable({ vulns }: Props) {
   if (vulns.length === 0) {
     return (
       <div style={s.empty}>
@@ -36,7 +35,7 @@ export default function VulnTable({ vulns, onFix }: Props) {
       <table style={s.table}>
         <thead>
           <tr>
-            {['Severity','Repo','Package','Version','CVE','Fixable','Source','Found','Action'].map(h => (
+            {['Severity','Repo','Package','Version','CVE','Fixable','Source','Found'].map(h => (
               <th key={h} style={s.th}>{h}</th>
             ))}
           </tr>
@@ -44,7 +43,6 @@ export default function VulnTable({ vulns, onFix }: Props) {
         <tbody>
           {vulns.map(v => {
             const sev = SEV_COLOR[v.severity] ?? { bg: '#f5f5f0', color: '#555' };
-            const canFix = v.fixable === 1 && !!v.snyk_issue_id && !v.fix_pr_url;
             return (
               <tr key={v.id} style={s.tr}>
                 <td style={s.td}>
@@ -74,14 +72,6 @@ export default function VulnTable({ vulns, onFix }: Props) {
                 </td>
                 <td style={s.td}><span style={s.source}>{v.source.replace('github_', '').replace('_', ' ')}</span></td>
                 <td style={s.td}><span style={s.muted}>{ago(v.created_at)}</span></td>
-                <td style={s.td}>
-                  {v.fix_pr_url
-                    ? <a href={v.fix_pr_url} target="_blank" rel="noreferrer" style={s.prLink}>View PR ↗</a>
-                    : canFix
-                      ? <button onClick={() => onFix(v.repo_id, v.snyk_issue_id!)} style={s.fixBtn}>Fix via Snyk</button>
-                      : <span style={s.muted}>—</span>
-                  }
-                </td>
               </tr>
             );
           })}
@@ -107,7 +97,5 @@ const s: Record<string, React.CSSProperties> = {
   muted:       { color: '#aaa' },
   fixYes:      { color: '#2D5A0E', fontWeight: 500 },
   source:      { textTransform: 'capitalize' as const, color: '#555' },
-  prLink:      { color: '#1B3A6B', textDecoration: 'none', fontWeight: 500 },
-  fixBtn:      { padding: '4px 10px', background: '#1B3A6B', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 500, cursor: 'pointer' },
   empty:       { padding: '3rem', textAlign: 'center', color: '#888', background: '#fff', borderRadius: 10, border: '0.5px solid #e8e8e0' },
 };

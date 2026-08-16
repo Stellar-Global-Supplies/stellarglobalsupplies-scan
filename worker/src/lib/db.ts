@@ -1,5 +1,4 @@
-import { Repo, ScanRun, Vulnerability, CodeQuality } from '../types';
-import { SonarMetrics } from './sonar';
+import { Repo, ScanRun, Vulnerability } from '../types';
 
 function nanoid(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 20);
@@ -47,81 +46,6 @@ export async function upsertReposFromGitHub(
   return { inserted: Math.min(repos.length, total), updated: repos.length - Math.min(repos.length, total) };
 }
 
-// Match Snyk project IDs to repos by GitHub URL or name
-export async function syncSnykProjectIds(
-  db: D1Database,
-  snykProjects: Array<{ snykProjectId: string; name: string; githubUrl: string }>
-): Promise<number> {
-  const repos = await getAllRepos(db);
-  let synced = 0;
-  const stmt  = db.prepare('UPDATE repos SET snyk_project_id = ? WHERE id = ?');
-  const batch = [];
-
-  for (const sp of snykProjects) {
-    // Also extract the repo slug from the Snyk GitHub URL as a fallback matcher.
-    const urlSlug = sp.githubUrl.split('/').pop()?.toLowerCase() ?? '';
-
-    const match = repos.find(r => {
-      const rName = r.name.toLowerCase();
-      const rUrl  = r.github_url.toLowerCase();
-      return (
-        rUrl  === sp.githubUrl.toLowerCase() ||
-        rName === sp.name.toLowerCase()      ||
-        (urlSlug && rName === urlSlug)
-      );
-    });
-    if (match) {
-      batch.push(stmt.bind(sp.snykProjectId, match.id));
-      synced++;
-    }
-  }
-
-  if (batch.length > 0) await db.batch(batch);
-  return synced;
-}
-
-// Sync SonarCloud project keys into repos
-export async function syncSonarProjectKeys(
-  db: D1Database,
-  sonarProjects: Array<{ projectKey: string; name: string; githubUrl: string }>
-): Promise<number> {
-  const repos = await getAllRepos(db);
-  let synced = 0;
-  const stmt  = db.prepare('UPDATE repos SET sonar_project_key = ? WHERE id = ?');
-  const batch = [];
-
-  for (const sonar of sonarProjects) {
-    // SonarCloud project keys look like "stellar-global-supplies_stellarglobalsupplies-ai".
-    // The org prefix can itself contain underscores if the org slug uses them,
-    // so we cannot safely split on the first '_'. Instead we try every possible
-    // prefix boundary and keep the shortest suffix that still looks like a repo slug.
-    //
-    // Strategy: try stripping known org prefixes by progressively splitting on '_'
-    // from the left until we get a slug that matches a repo name.
-    const keyParts  = sonar.projectKey.toLowerCase().split('_');
-    const keySlugs  = keyParts.map((_, i) => keyParts.slice(i + 1).join('_')).filter(Boolean);
-    // Also try the full key and just the last segment as final fallbacks
-    keySlugs.push(sonar.projectKey.toLowerCase(), keyParts[keyParts.length - 1]);
-
-    const match = repos.find(r => {
-      const rName = r.name.toLowerCase();
-      const rUrl  = r.github_url.toLowerCase();
-      return (
-        rUrl  === sonar.githubUrl.toLowerCase() ||
-        rName === sonar.name.toLowerCase()      ||
-        keySlugs.some(slug => slug && rName === slug)
-      );
-    });
-    if (match) {
-      batch.push(stmt.bind(sonar.projectKey, match.id));
-      synced++;
-    }
-  }
-
-  if (batch.length > 0) await db.batch(batch);
-  return synced;
-}
-
 // ── Scan Runs ─────────────────────────────────────────────────────────────────
 
 export async function createScanRun(
@@ -167,7 +91,6 @@ export async function insertVulnerabilities(
   repoId: string,
   vulns: Array<{
     github_alert_id?: number | null | undefined;
-    snyk_issue_id?:   string | null | undefined;
     cve:              string | null;
     title:            string;
     severity:         string;
@@ -182,9 +105,9 @@ export async function insertVulnerabilities(
 
   const stmt = db.prepare(`
     INSERT INTO vulnerabilities
-      (id, scan_run_id, repo_id, github_alert_id, snyk_issue_id, cve, title,
+      (id, scan_run_id, repo_id, github_alert_id, cve, title,
        severity, package_name, from_version, to_version, fixable, source)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   await db.batch(
@@ -192,7 +115,6 @@ export async function insertVulnerabilities(
       stmt.bind(
         nanoid(), scanRunId, repoId,
         v.github_alert_id ?? null,
-        v.snyk_issue_id   ?? null,
         v.cve, v.title, v.severity,
         v.package_name, v.from_version, v.to_version, v.fixable, v.source
       )
@@ -256,66 +178,6 @@ export async function getVulnSummary(db: D1Database) {
     if (row.severity in summary) (summary as Record<string, number>)[row.severity] = row.count;
   }
   return summary;
-}
-
-// Update fix PR URL by Snyk issue ID
-export async function updateFixPRUrlBySnykId(
-  db: D1Database,
-  snykIssueId: string,
-  prUrl: string
-): Promise<void> {
-  await db
-    .prepare('UPDATE vulnerabilities SET fix_pr_url = ? WHERE snyk_issue_id = ?')
-    .bind(prUrl, snykIssueId)
-    .run();
-}
-
-// ── Code Quality ──────────────────────────────────────────────────────────────
-
-export async function insertCodeQuality(
-  db: D1Database,
-  repoId: string,
-  scanRunId: string,
-  sonarProjectKey: string,
-  metrics: SonarMetrics
-): Promise<void> {
-  await db.prepare(`
-    INSERT INTO code_quality (
-      id, repo_id, scan_run_id, sonar_project_key,
-      reliability_rating, maintainability_rating, security_rating,
-      code_smells, duplicated_lines_pct, complexity, cognitive_complexity,
-      coverage_pct, lines_of_code, security_hotspots, technical_debt_mins
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    nanoid(), repoId, scanRunId, sonarProjectKey,
-    metrics.reliabilityRating, metrics.maintainabilityRating, metrics.securityRating,
-    metrics.codeSmells, metrics.duplicatedLinesPct, metrics.complexity,
-    metrics.cognitiveComplexity, metrics.coveragePct, metrics.linesOfCode,
-    metrics.securityHotspots, metrics.technicalDebtMins
-  ).run();
-}
-
-export async function getLatestQualityAll(db: D1Database): Promise<(CodeQuality & { repo_name: string })[]> {
-  const { results } = await db.prepare(`
-    SELECT cq.*, r.name as repo_name
-    FROM code_quality cq
-    JOIN repos r ON cq.repo_id = r.id
-    JOIN (
-      SELECT repo_id, MAX(created_at) as max_created_at
-      FROM code_quality
-      GROUP BY repo_id
-    ) latest ON cq.repo_id = latest.repo_id AND cq.created_at = latest.max_created_at
-    ORDER BY r.name
-  `).all<CodeQuality & { repo_name: string }>();
-  return results;
-}
-
-export async function getQualityHistory(db: D1Database, repoId: string, limit = 10): Promise<CodeQuality[]> {
-  const { results } = await db
-    .prepare('SELECT * FROM code_quality WHERE repo_id = ? ORDER BY created_at DESC LIMIT ?')
-    .bind(repoId, limit)
-    .all<CodeQuality>();
-  return results;
 }
 
 export async function touchRepoLastScanned(db: D1Database, repoId: string): Promise<void> {

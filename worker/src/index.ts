@@ -6,7 +6,6 @@ import { handleCron }   from './cron/scheduler';
 import repos   from './routes/repos';
 import scans   from './routes/scans';
 import vulns   from './routes/vulns';
-import quality from './routes/quality';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -29,7 +28,6 @@ app.use('/api/*', cors({
 app.route('/api/repos',   repos);
 app.route('/api/scans',   scans);
 app.route('/api/vulns',   vulns);
-app.route('/api/quality', quality);
 
 app.get('/health', (c) => c.json({
   ok:      true,
