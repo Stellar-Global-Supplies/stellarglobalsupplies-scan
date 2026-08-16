@@ -206,6 +206,51 @@ export interface CodeQualityRow {
   created_at:             number;
 }
 
+export async function insertCodeQuality(
+  db:         D1Database,
+  scanRunId:  string,
+  repoId:     string,
+  repoSlug:   string,
+  metrics: {
+    reliability_rating:     string;
+    maintainability_rating: string;
+    security_rating:        string;
+    code_smells:            number;
+    lines_of_code:          number;
+    security_hotspots:      number;
+    technical_debt_mins:    number;
+    duplicated_lines_pct:   number | null;
+    complexity:             number | null;
+    cognitive_complexity:   number | null;
+    coverage_pct:           number | null;
+  }
+): Promise<void> {
+  function nanoid(): string {
+    return crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+  }
+  await db.prepare(`
+    INSERT INTO code_quality (
+      id, repo_id, scan_run_id, source, sonar_project_key,
+      reliability_rating, maintainability_rating, security_rating,
+      code_smells, duplicated_lines_pct, complexity, cognitive_complexity,
+      coverage_pct, lines_of_code, security_hotspots, technical_debt_mins
+    ) VALUES (?, ?, ?, 'github', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    nanoid(), repoId, scanRunId, repoSlug,
+    metrics.reliability_rating,
+    metrics.maintainability_rating,
+    metrics.security_rating,
+    metrics.code_smells,
+    metrics.duplicated_lines_pct,
+    metrics.complexity,
+    metrics.cognitive_complexity,
+    metrics.coverage_pct,
+    metrics.lines_of_code,
+    metrics.security_hotspots,
+    metrics.technical_debt_mins,
+  ).run();
+}
+
 export async function getLatestQualityAll(db: D1Database): Promise<CodeQualityRow[]> {
   // Guard: if the code_quality table doesn't exist yet (migration not run),
   // return [] instead of crashing the worker with a D1 error.

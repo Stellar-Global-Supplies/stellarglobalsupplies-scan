@@ -198,3 +198,138 @@ export function parseCodeScanningAlert(alert: GitHubCodeScanningAlert) {
     source:         'github_code_scanning',
   };
 }
+// ── Quality data from GitHub REST API ────────────────────────────────────────
+
+export interface GitHubRepoMeta {
+  name:              string;
+  full_name:         string;
+  html_url:          string;
+  open_issues_count: number;   // proxy for code_smells
+  size:              number;   // KB on disk
+  language:          string | null;
+  forks_count:       number;
+  stargazers_count:  number;
+  default_branch:    string;
+}
+
+// Fetch basic repo metadata (open issues count, size, language, etc.)
+export async function fetchRepoMeta(
+  owner: string,
+  repo: string,
+  token: string
+): Promise<GitHubRepoMeta> {
+  const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
+    headers: githubHeaders(token),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Repo meta failed (HTTP ${res.status}): ${body}`);
+  }
+  return res.json<GitHubRepoMeta>();
+}
+
+// Fetch language breakdown → { TypeScript: 12345, JavaScript: 678, ... } (bytes)
+// We sum all values to get total lines-of-code proxy (bytes ÷ 35 ≈ lines)
+export async function fetchRepoLanguages(
+  owner: string,
+  repo: string,
+  token: string
+): Promise<Record<string, number>> {
+  const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/languages`, {
+    headers: githubHeaders(token),
+  });
+  if (!res.ok) return {};
+  return res.json<Record<string, number>>();
+}
+
+// ── Derive A–E quality ratings from GitHub alert counts ───────────────────────
+//
+// Rating logic (thresholds chosen to match SonarCloud's spirit):
+//
+//  security_rating     ← code scanning alert count (SAST)
+//    A = 0 alerts
+//    B = 1–2
+//    C = 3–5
+//    D = 6–10
+//    E = 11+
+//
+//  reliability_rating  ← dependabot critical/high count
+//    A = 0
+//    B = 1
+//    C = 2–3
+//    D = 4–6
+//    E = 7+
+//
+//  maintainability_rating ← open issues count (proxy for code debt)
+//    A = 0–2
+//    B = 3–10
+//    C = 11–25
+//    D = 26–50
+//    E = 51+
+
+function toSecurityRating(codeScanCount: number): string {
+  if (codeScanCount === 0)   return 'A';
+  if (codeScanCount <= 2)    return 'B';
+  if (codeScanCount <= 5)    return 'C';
+  if (codeScanCount <= 10)   return 'D';
+  return 'E';
+}
+
+function toReliabilityRating(critHighDepbotCount: number): string {
+  if (critHighDepbotCount === 0) return 'A';
+  if (critHighDepbotCount === 1) return 'B';
+  if (critHighDepbotCount <= 3)  return 'C';
+  if (critHighDepbotCount <= 6)  return 'D';
+  return 'E';
+}
+
+function toMaintainabilityRating(openIssues: number): string {
+  if (openIssues <= 2)  return 'A';
+  if (openIssues <= 10) return 'B';
+  if (openIssues <= 25) return 'C';
+  if (openIssues <= 50) return 'D';
+  return 'E';
+}
+
+export interface DerivedQualityMetrics {
+  reliability_rating:     string;
+  maintainability_rating: string;
+  security_rating:        string;
+  code_smells:            number;   // = open_issues_count
+  lines_of_code:          number;   // derived from language bytes ÷ 35
+  security_hotspots:      number;   // = code scanning alert count
+  technical_debt_mins:    number;   // = open_issues_count × 30 min estimate
+  // Fields we can't derive from GitHub free APIs — left null
+  duplicated_lines_pct:   null;
+  complexity:             null;
+  cognitive_complexity:   null;
+  coverage_pct:           null;
+}
+
+export function deriveQualityMetrics(
+  meta:            GitHubRepoMeta,
+  languageBytes:   Record<string, number>,
+  dependabotAlerts: { severity: string }[],
+  codeScanAlerts:   unknown[]
+): DerivedQualityMetrics {
+  const critHigh = dependabotAlerts.filter(
+    a => a.severity === 'critical' || a.severity === 'high'
+  ).length;
+
+  const totalBytes  = Object.values(languageBytes).reduce((s, b) => s + b, 0);
+  const linesOfCode = Math.round(totalBytes / 35); // bytes ÷ avg chars-per-line
+
+  return {
+    reliability_rating:     toReliabilityRating(critHigh),
+    maintainability_rating: toMaintainabilityRating(meta.open_issues_count),
+    security_rating:        toSecurityRating(codeScanAlerts.length),
+    code_smells:            meta.open_issues_count,
+    lines_of_code:          linesOfCode,
+    security_hotspots:      codeScanAlerts.length,
+    technical_debt_mins:    meta.open_issues_count * 30,
+    duplicated_lines_pct:   null,
+    complexity:             null,
+    cognitive_complexity:   null,
+    coverage_pct:           null,
+  };
+}

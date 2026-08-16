@@ -1,8 +1,17 @@
 import { Env, QueueMessage } from '../types';
-import { fetchDependabotAlerts, fetchCodeScanningAlerts, parseDependabotAlert, parseCodeScanningAlert } from '../lib/github';
+import {
+  fetchDependabotAlerts,
+  fetchCodeScanningAlerts,
+  fetchRepoMeta,
+  fetchRepoLanguages,
+  deriveQualityMetrics,
+  parseDependabotAlert,
+  parseCodeScanningAlert,
+} from '../lib/github';
 import {
   updateScanStatus,
   insertVulnerabilities,
+  insertCodeQuality,
   touchRepoLastScanned,
   getRepo,
 } from '../lib/db';
@@ -11,7 +20,6 @@ export async function handleQueue(
   batch: MessageBatch<QueueMessage>,
   env: Env
 ): Promise<void> {
-  // Resolve secrets once per batch — .get() is async for [[secrets_store_secrets]]
   const githubToken = await env.GITHUB_TOKEN.get();
 
   for (const message of batch.messages) {
@@ -29,37 +37,70 @@ export async function handleQueue(
       const url = new URL(repo.github_url);
       const [, owner, repoName] = url.pathname.split('/');
 
-      const allVulns: Array<
-        ReturnType<typeof parseDependabotAlert> |
-        ReturnType<typeof parseCodeScanningAlert>
-      > = [];
-
-      // ── 1. GitHub Dependabot — dependency CVEs (free, public repos) ───────
+      // ── 1. Dependabot alerts ───────────────────────────────────────────────
+      let dependabotAlerts: Awaited<ReturnType<typeof fetchDependabotAlerts>> = [];
       try {
-        const alerts = await fetchDependabotAlerts(owner, repoName, githubToken);
-        allVulns.push(...alerts.map(parseDependabotAlert));
-        console.log(`[Queue] Dependabot: ${alerts.length} alerts in ${repo.name}`);
+        dependabotAlerts = await fetchDependabotAlerts(owner, repoName, githubToken);
+        console.log(`[Queue] Dependabot: ${dependabotAlerts.length} alerts in ${repo.name}`);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn(`[Queue] Dependabot skipped for ${repo.name}: ${msg}`);
       }
 
-      // ── 2. GitHub Code Scanning — SAST (free, public repos) ───────────────
+      // ── 2. Code scanning alerts ────────────────────────────────────────────
+      let codeScanAlerts: Awaited<ReturnType<typeof fetchCodeScanningAlerts>> = [];
       try {
-        const alerts = await fetchCodeScanningAlerts(owner, repoName, githubToken);
-        allVulns.push(...alerts.map(parseCodeScanningAlert));
-        console.log(`[Queue] Code scanning: ${alerts.length} alerts in ${repo.name}`);
+        codeScanAlerts = await fetchCodeScanningAlerts(owner, repoName, githubToken);
+        console.log(`[Queue] Code scanning: ${codeScanAlerts.length} alerts in ${repo.name}`);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn(`[Queue] Code scanning skipped for ${repo.name}: ${msg}`);
       }
 
+      // ── 3. Repo meta + languages for quality metrics ───────────────────────
+      let repoMeta:       Awaited<ReturnType<typeof fetchRepoMeta>>      | null = null;
+      let languageBytes:  Awaited<ReturnType<typeof fetchRepoLanguages>>        = {};
+      try {
+        [repoMeta, languageBytes] = await Promise.all([
+          fetchRepoMeta(owner, repoName, githubToken),
+          fetchRepoLanguages(owner, repoName, githubToken),
+        ]);
+        console.log(`[Queue] Repo meta fetched for ${repo.name}: ${repoMeta.open_issues_count} open issues`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn(`[Queue] Repo meta skipped for ${repo.name}: ${msg}`);
+      }
+
+      // ── 4. Insert vulnerabilities ──────────────────────────────────────────
+      const allVulns = [
+        ...dependabotAlerts.map(parseDependabotAlert),
+        ...codeScanAlerts.map(parseCodeScanningAlert),
+      ];
       await insertVulnerabilities(env.DB, job.scan_run_id, job.repo_id, allVulns);
 
-      // ── 3. Done ────────────────────────────────────────────────────────────
+      // ── 5. Insert code quality snapshot ───────────────────────────────────
+      if (repoMeta) {
+        const metrics = deriveQualityMetrics(
+          repoMeta,
+          languageBytes,
+          dependabotAlerts.map(a => ({ severity: a.severity })),
+          codeScanAlerts,
+        );
+        await insertCodeQuality(
+          env.DB,
+          job.scan_run_id,
+          job.repo_id,
+          repoName,   // GitHub repo slug stored in sonar_project_key column
+          metrics,
+        );
+        console.log(`[Queue] Quality snapshot saved for ${repo.name}: security=${metrics.security_rating} reliability=${metrics.reliability_rating} maintainability=${metrics.maintainability_rating}`);
+      }
+
+      // ── 6. Done ────────────────────────────────────────────────────────────
       await updateScanStatus(env.DB, job.scan_run_id, 'done', { vulnCount: allVulns.length });
       await touchRepoLastScanned(env.DB, job.repo_id);
       message.ack();
+
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       console.error(`[Queue] Failed ${job.repo_id}: ${msg}`);
