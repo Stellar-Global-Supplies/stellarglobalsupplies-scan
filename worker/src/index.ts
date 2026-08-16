@@ -15,6 +15,7 @@ app.use('/api/*', cors({
   origin: (origin) => {
     const allowed = [
       'https://scan.stellarglobalsupplies.com',
+      'https://scan-worker.workwithprasadbhavsar.workers.dev',
       'http://localhost:5173',
     ];
     return allowed.includes(origin) ? origin : null;
