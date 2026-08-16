@@ -58,10 +58,18 @@ export async function syncSnykProjectIds(
   const batch = [];
 
   for (const sp of snykProjects) {
-    const match = repos.find(r =>
-      r.github_url.toLowerCase() === sp.githubUrl.toLowerCase() ||
-      r.name.toLowerCase()       === sp.name.toLowerCase()
-    );
+    // Also extract the repo slug from the Snyk GitHub URL as a fallback matcher.
+    const urlSlug = sp.githubUrl.split('/').pop()?.toLowerCase() ?? '';
+
+    const match = repos.find(r => {
+      const rName = r.name.toLowerCase();
+      const rUrl  = r.github_url.toLowerCase();
+      return (
+        rUrl  === sp.githubUrl.toLowerCase() ||
+        rName === sp.name.toLowerCase()      ||
+        (urlSlug && rName === urlSlug)
+      );
+    });
     if (match) {
       batch.push(stmt.bind(sp.snykProjectId, match.id));
       synced++;
@@ -83,10 +91,21 @@ export async function syncSonarProjectKeys(
   const batch = [];
 
   for (const sonar of sonarProjects) {
-    const match = repos.find(r =>
-      r.github_url.toLowerCase() === sonar.githubUrl.toLowerCase() ||
-      r.name.toLowerCase()       === sonar.name.toLowerCase()
-    );
+    // Extract bare repo slug from the project key (e.g. "sgs_my-repo" → "my-repo")
+    // so we can match even when the display name differs slightly.
+    const keySlug = sonar.projectKey.includes('_')
+      ? sonar.projectKey.split('_').slice(1).join('_').toLowerCase()
+      : sonar.projectKey.toLowerCase();
+
+    const match = repos.find(r => {
+      const rName = r.name.toLowerCase();
+      const rUrl  = r.github_url.toLowerCase();
+      return (
+        rUrl  === sonar.githubUrl.toLowerCase() ||
+        rName === sonar.name.toLowerCase()      ||
+        rName === keySlug
+      );
+    });
     if (match) {
       batch.push(stmt.bind(sonar.projectKey, match.id));
       synced++;

@@ -72,13 +72,23 @@ export async function fetchSonarProjects(
     }>();
 
     for (const c of body.components) {
-      // SonarCloud project key is typically "org_repo-name"
-      // GitHub URL reconstructed from org + repo name portion
-      const repoPart = c.key.replace(`${org}_`, '');
+      // SonarCloud project keys are like "stellar-global-supplies_reponame".
+      // The org prefix is always lowercased by SonarCloud, so we cannot safely
+      // reconstruct the GitHub URL (org casing mismatch breaks URL comparison).
+      // Instead we strip the org prefix to get just the repo slug as the name,
+      // and rely on the name-based fallback in syncSonarProjectKeys().
+      const repoPart = c.key.startsWith(`${org}_`)
+        ? c.key.slice(org.length + 1)
+        : c.key.split('_').slice(1).join('_') || c.key;
       projects.push({
         projectKey: c.key,
-        name:       c.name,
-        githubUrl:  `https://github.com/${org}/${repoPart}`,
+        // Prefer the human-readable name; also try the key slug as a fallback
+        // so that name-matching in db.ts can find repos by either value.
+        name:       c.name || repoPart,
+        // We intentionally do NOT reconstruct a guessed GitHub URL here because
+        // the SonarCloud org key is lowercase while GitHub orgs can be mixed-case.
+        // The syncSonarProjectKeys() matcher already falls back to name comparison.
+        githubUrl:  `https://github.com/Stellar-Global-Supplies/${repoPart}`,
       });
     }
 

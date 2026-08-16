@@ -67,9 +67,17 @@ export async function fetchSnykProjects(
     }>();
 
     for (const p of body.data) {
-      const githubUrl = p.attributes.target?.url ?? '';
-      if (!githubUrl.includes('github.com')) continue;  // skip non-GitHub projects
+      const rawUrl = p.attributes.target?.url ?? '';
+      if (!rawUrl.includes('github.com')) continue;  // skip non-GitHub projects
 
+      // Snyk can return SSH URLs like git@github.com:Org/repo.git
+      // or HTTPS like https://github.com/Org/repo — normalise to HTTPS.
+      let githubUrl = rawUrl.replace(/\.git$/, '');
+      if (githubUrl.startsWith('git@github.com:')) {
+        githubUrl = 'https://github.com/' + githubUrl.slice('git@github.com:'.length);
+      }
+
+      // display_name is usually just the repo name (e.g. "stellarglobalsupplies-ai")
       const repoName = p.attributes.target?.display_name
         ?? p.attributes.name.split(':')[0].split('/').pop()
         ?? p.attributes.name;
@@ -77,7 +85,7 @@ export async function fetchSnykProjects(
       projects.push({
         snykProjectId: p.id,
         name:          repoName,
-        githubUrl:     githubUrl.replace(/\.git$/, ''),
+        githubUrl,
       });
     }
 
