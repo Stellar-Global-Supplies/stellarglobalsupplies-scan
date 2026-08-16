@@ -39,15 +39,22 @@ function ago(ts: number): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+function sourceLabel(source: string): string {
+  if (source === 'github_dependabot')     return 'Dependabot';
+  if (source === 'github_code_scanning')  return 'Code Scanning';
+  return source;
+}
+
 export default function QualityCard({ quality: q }: Props) {
-  const sonarUrl = `https://sonarcloud.io/project/overview?id=${q.sonar_project_key}`;
+  // sonar_project_key now stores the GitHub repo slug (kept for DB compat)
+  const githubUrl = `https://github.com/Stellar-Global-Supplies/${q.sonar_project_key}`;
 
   return (
     <div style={s.card}>
       <div style={s.header}>
         <div style={s.repoName}>{q.repo_name ?? q.repo_id}</div>
-        <a href={sonarUrl} target="_blank" rel="noreferrer" style={s.sonarLink}>
-          SonarCloud ↗
+        <a href={githubUrl} target="_blank" rel="noreferrer" style={s.githubLink}>
+          GitHub ↗
         </a>
       </div>
 
@@ -71,7 +78,7 @@ export default function QualityCard({ quality: q }: Props) {
       </div>
 
       <div style={s.footer}>
-        Scanned {ago(q.created_at)} · via SonarCloud
+        Scanned {ago(q.created_at)} · via {sourceLabel(q.source)}
       </div>
     </div>
   );
@@ -90,7 +97,7 @@ const s: Record<string, React.CSSProperties> = {
   card:        { background:'#fff', border:'0.5px solid #e8e8e0', borderRadius:10, padding:'14px 16px' },
   header:      { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 },
   repoName:    { fontSize:14, fontWeight:600, color:'#1B3A6B', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:200 },
-  sonarLink:   { fontSize:11, color:'#1B3A6B', textDecoration:'none', whiteSpace:'nowrap' },
+  githubLink:  { fontSize:11, color:'#1B3A6B', textDecoration:'none', whiteSpace:'nowrap' },
   ratings:     { display:'flex', gap:10, marginBottom:12 },
   ratingWrap:  { display:'flex', flexDirection:'column', alignItems:'center', gap:4, flex:1 },
   ratingBadge: { width:36, height:36, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, fontWeight:700 },

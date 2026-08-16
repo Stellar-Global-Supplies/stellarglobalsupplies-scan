@@ -1,9 +1,8 @@
 import { Hono } from 'hono';
-import { Env, JWTPayload } from '../types';
-import { getLatestQualityAll, getQualityHistory, syncSonarProjectKeys } from '../lib/db';
-import { fetchSonarProjects } from '../lib/sonar';
+import { Env } from '../types';
+import { getLatestQualityAll, getQualityHistory } from '../lib/db';
 
-const quality = new Hono<{ Bindings: Env; Variables: { user: JWTPayload } }>();
+const quality = new Hono<{ Bindings: Env }>();
 
 // GET /api/quality — latest quality snapshot for all repos
 quality.get('/', async (c) => {
@@ -17,32 +16,8 @@ quality.get('/:repoId/history', async (c) => {
   return c.json({ history });
 });
 
-// POST /api/quality/sync — match SonarCloud projects → D1 repos
-quality.post('/sync', async (c) => {
-  try {
-    // SONARCLOUD_ORG and SONARCLOUD_TOKEN are SecretBinding objects — must call .get()
-    const [sonarOrg, sonarToken] = await Promise.all([
-      c.env.SONARCLOUD_ORG.get(),
-      c.env.SONARCLOUD_TOKEN.get(),
-    ]);
-    const sonarProjects = await fetchSonarProjects(sonarOrg, sonarToken);
-
-    if (sonarProjects.length === 0) {
-      return c.json({
-        message: 'No projects found in SonarCloud org. Import repos at sonarcloud.io first.',
-        synced:  0,
-      });
-    }
-
-    const synced = await syncSonarProjectKeys(c.env.DB, sonarProjects);
-    return c.json({
-      found:   sonarProjects.length,
-      synced,
-      message: `Found ${sonarProjects.length} SonarCloud projects, matched ${synced} repos in D1.`,
-    });
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : 'Sync failed' }, 500);
-  }
-});
+// NOTE: /api/quality/sync is removed — SonarCloud is no longer used.
+// Quality data is now populated automatically during GitHub scans
+// via the Dependabot + Code Scanning consumer in queue/consumer.ts.
 
 export default quality;

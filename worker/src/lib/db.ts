@@ -183,3 +183,62 @@ export async function getVulnSummary(db: D1Database) {
 export async function touchRepoLastScanned(db: D1Database, repoId: string): Promise<void> {
   await db.prepare('UPDATE repos SET last_scanned_at = unixepoch() WHERE id = ?').bind(repoId).run();
 }
+// ── Code Quality ──────────────────────────────────────────────────────────────
+
+export interface CodeQualityRow {
+  id:                     string;
+  repo_id:                string;
+  repo_name?:             string;
+  scan_run_id:            string;
+  source:                 string;
+  sonar_project_key:      string;
+  reliability_rating:     string | null;
+  maintainability_rating: string | null;
+  security_rating:        string | null;
+  code_smells:            number | null;
+  duplicated_lines_pct:   number | null;
+  complexity:             number | null;
+  cognitive_complexity:   number | null;
+  coverage_pct:           number | null;
+  lines_of_code:          number | null;
+  security_hotspots:      number | null;
+  technical_debt_mins:    number | null;
+  created_at:             number;
+}
+
+export async function getLatestQualityAll(db: D1Database): Promise<CodeQualityRow[]> {
+  // Return the most recent quality row per repo
+  const { results } = await db.prepare(`
+    SELECT cq.*, r.name as repo_name
+    FROM code_quality cq
+    JOIN repos r ON cq.repo_id = r.id
+    JOIN (
+      SELECT repo_id, MAX(created_at) as max_created
+      FROM code_quality
+      GROUP BY repo_id
+    ) latest ON cq.repo_id = latest.repo_id AND cq.created_at = latest.max_created
+    ORDER BY r.name
+  `).all<CodeQualityRow>();
+  return results;
+}
+
+export async function getQualityHistory(db: D1Database, repoId: string): Promise<CodeQualityRow[]> {
+  const { results } = await db.prepare(`
+    SELECT cq.*, r.name as repo_name
+    FROM code_quality cq
+    JOIN repos r ON cq.repo_id = r.id
+    WHERE cq.repo_id = ?
+    ORDER BY cq.created_at DESC
+    LIMIT 20
+  `).bind(repoId).all<CodeQualityRow>();
+  return results;
+}
+
+export async function syncSonarProjectKeys(
+  _db: D1Database,
+  _projects: unknown[]
+): Promise<number> {
+  // Stub — SonarCloud removed. Quality data now comes from GitHub scans.
+  console.warn('[db] syncSonarProjectKeys called but SonarCloud is no longer in use');
+  return 0;
+}

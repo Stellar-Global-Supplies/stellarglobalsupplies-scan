@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { api, RepoWithStatus, Vulnerability, VulnSummary } from '../lib/api';
+import { api, RepoWithStatus, Vulnerability, VulnSummary, CodeQuality } from '../lib/api';
 import RepoCard    from '../components/RepoCard';
 import VulnTable   from '../components/VulnTable';
+import QualityCard from '../components/QualityCard';
 
-type Tab = 'repos' | 'vulns';
+type Tab = 'repos' | 'vulns' | 'quality';
 
 export default function Dashboard() {
   const [tab,      setTab]      = useState<Tab>('repos');
   const [repos,    setRepos]    = useState<RepoWithStatus[]>([]);
   const [vulns,    setVulns]    = useState<Vulnerability[]>([]);
+  const [quality,  setQuality]  = useState<CodeQuality[]>([]);
   const [summary,  setSummary]  = useState<VulnSummary>({ critical:0, high:0, medium:0, low:0 });
   const [loading,  setLoading]  = useState(true);
   const [scanning,   setScanning]   = useState(false);
@@ -47,13 +49,24 @@ export default function Dashboard() {
     setVulns(res.vulnerabilities);
   }, [sevFilter, fixFilter, repoFilter, sourceFilter]);
 
+  const loadQuality = useCallback(async () => {
+    try {
+      const res = await api.quality.list();
+      setQuality(res.quality);
+    } catch {
+      // quality data is optional — don't break the page if unavailable
+      setQuality([]);
+    }
+  }, []);
+
   useEffect(() => { loadData(); }, [loadData]);
 
   useEffect(() => {
-    if (tab === 'vulns') loadVulns();
-  }, [tab, loadVulns]);
+    if (tab === 'vulns')   loadVulns();
+    if (tab === 'quality') loadQuality();
+  }, [tab, loadVulns, loadQuality]);
 
-  // Poll while scans are active; reload vulns too so the table stays live
+  // Poll while scans are active; reload vulns + quality too so tabs stay live
   useEffect(() => {
     const hasActive = repos.some(r =>
       r.latest_scan?.status === 'queued' || r.latest_scan?.status === 'scanning'
@@ -63,9 +76,10 @@ export default function Dashboard() {
     const timer = setInterval(async () => {
       await loadData();
       loadVulns();
+      if (tab === 'quality') loadQuality();
     }, 4000);
     return () => clearInterval(timer);
-  }, [repos, loadData, loadVulns]);
+  }, [repos, tab, loadData, loadVulns, loadQuality]);
 
   async function syncFromGitHub() {
     setGithubSync(true);
@@ -171,8 +185,9 @@ export default function Dashboard() {
       {/* ── Tabs ────────────────────────────────────────────────────────────── */}
       <div style={s.tabs}>
         {([
-          { key:'repos', label:`Repositories (${repos.length})` },
-          { key:'vulns', label:`Vulnerabilities (${totalIssues})` },
+          { key:'repos',   label:`Repositories (${repos.length})` },
+          { key:'vulns',   label:`Vulnerabilities (${totalIssues})` },
+          { key:'quality', label:`Code Quality (${quality.length})` },
         ] as { key: Tab; label: string }[]).map(t => (
           <button
             key={t.key}
@@ -223,6 +238,27 @@ export default function Dashboard() {
           <VulnTable vulns={vulns} />
         </>
       )}
+
+      {/* ── Quality tab ─────────────────────────────────────────────────────── */}
+      {tab === 'quality' && (
+        <>
+          {quality.length === 0 ? (
+            <div style={s.emptyState}>
+              <div style={{ fontSize:32, marginBottom:8 }}>📊</div>
+              <p style={{ fontWeight:600, marginBottom:4 }}>No code quality data yet</p>
+              <p style={{ color:'#aaa', fontSize:13 }}>
+                Run a scan to populate quality metrics from GitHub Code Scanning.
+              </p>
+            </div>
+          ) : (
+            <div style={s.qualityGrid}>
+              {quality.map(q => (
+                <QualityCard key={q.id} quality={q} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -248,7 +284,9 @@ const s: Record<string, React.CSSProperties> = {
   tab:         { padding:'8px 18px', background:'none', border:'none', borderBottom:'2px solid transparent', fontSize:13, cursor:'pointer', color:'#888' },
   tabActive:   { padding:'8px 18px', background:'none', border:'none', borderBottom:'2px solid #1B3A6B', fontSize:13, cursor:'pointer', color:'#1B3A6B', fontWeight:600 },
   repoGrid:    { display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))', gap:10 },
+  qualityGrid: { display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))', gap:10 },
   filters:     { display:'flex', gap:8, marginBottom:'1rem', flexWrap:'wrap', alignItems:'center' },
   select:      { padding:'6px 10px', border:'0.5px solid #ddd', borderRadius:8, fontSize:13, background:'#fff', cursor:'pointer' },
   refreshBtn:  { padding:'6px 12px', border:'0.5px solid #ddd', borderRadius:8, fontSize:13, cursor:'pointer', background:'#fff' },
+  emptyState:  { textAlign:'center', padding:'3rem', background:'#fff', border:'0.5px solid #e8e8e0', borderRadius:10, color:'#888' },
 };

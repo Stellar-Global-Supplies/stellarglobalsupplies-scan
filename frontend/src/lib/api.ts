@@ -47,6 +47,11 @@ export const api = {
     },
     summary: () => req<{ summary: VulnSummary }>('GET', '/api/vulns/summary'),
   },
+
+  quality: {
+    list: () => req<{ quality: CodeQuality[] }>('GET', '/api/quality'),
+    history: (repoId: string) => req<{ history: CodeQuality[] }>('GET', `/api/quality/${repoId}/history`),
+  },
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -96,4 +101,25 @@ export interface VulnSummary {
   high:     number;
   medium:   number;
   low:      number;
+}
+
+export interface CodeQuality {
+  id:                     string;
+  repo_id:                string;
+  repo_name?:             string;
+  scan_run_id:            string;
+  source:                 string;   // 'github_dependabot' | 'github_code_scanning' etc.
+  sonar_project_key:      string;   // kept for DB compat; now stores GitHub repo slug
+  reliability_rating:     string | null;
+  maintainability_rating: string | null;
+  security_rating:        string | null;
+  code_smells:            number | null;
+  duplicated_lines_pct:   number | null;
+  complexity:             number | null;
+  cognitive_complexity:   number | null;
+  coverage_pct:           number | null;
+  lines_of_code:          number | null;
+  security_hotspots:      number | null;
+  technical_debt_mins:    number | null;
+  created_at:             number;
 }
