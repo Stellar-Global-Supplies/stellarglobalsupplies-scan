@@ -56,17 +56,17 @@ export default function RepoCard({ repo, onScan }: Props) {
           <span style={s.vulnCount}>{scan.vuln_count} issues</span>
         )}
         {!repo.snyk_project_id && (
-          <span style={s.notImported}>⚠ Not imported to Snyk</span>
+          <span style={s.notImported} title="Sync Snyk to enable Fix PRs">⚠ Snyk not linked</span>
         )}
       </div>
 
       <button
         onClick={onScan}
-        disabled={active || !repo.snyk_project_id}
+        disabled={active}
         style={{
           ...s.btn,
-          opacity: (active || !repo.snyk_project_id) ? 0.5 : 1,
-          cursor:  (active || !repo.snyk_project_id) ? 'not-allowed' : 'pointer',
+          opacity: active ? 0.5 : 1,
+          cursor:  active ? 'not-allowed' : 'pointer',
         }}
       >
         {active ? 'Scanning…' : '⚡ Scan now'}

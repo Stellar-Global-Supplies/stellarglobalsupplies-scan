@@ -45,15 +45,22 @@ export interface SnykIssue {
 // ── Projects ──────────────────────────────────────────────────────────────────
 
 // Fetch all active projects already in your Snyk org using the v1 API.
+// The v1 GET /org/:id/projects endpoint was deprecated and returns 410 Gone.
+// The correct call is POST /org/:id/projects (with empty JSON body).
 // The REST API (api.snyk.io/rest) returns 403 for legacy API tokens on project
-// listing. The v1 endpoint works with all token types including legacy tokens.
+// listing. The v1 POST endpoint works with all token types including legacy tokens.
 export async function fetchSnykProjects(
   orgId: string,
   token: string
 ): Promise<SnykProject[]> {
   // v1 list-projects endpoint — POST with empty body, works with all token types
+  // NOTE: GET was deprecated (returns 410); POST is the correct method.
   const url = `${SNYK_V1}/org/${orgId}/projects`;
-  const res  = await fetch(url, { method: 'GET', headers: headers(token) });
+  const res  = await fetch(url, {
+    method:  'POST',
+    headers: headers(token),
+    body:    JSON.stringify({}),
+  });
   if (!res.ok) throw new Error(`Snyk projects fetch failed: ${res.status} ${await res.text()}`);
 
   const body = await res.json<{

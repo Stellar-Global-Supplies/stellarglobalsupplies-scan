@@ -20,6 +20,12 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 export const api = {
   repos: {
     list: () => req<{ repos: RepoWithStatus[] }>('GET', '/api/repos'),
+    // Pull latest repos from GitHub org into D1
+    syncFromGitHub: () =>
+      req<{ synced: number; inserted: number; updated: number; message: string }>(
+        'POST', '/api/repos/sync'
+      ),
+    // Match existing Snyk projects to repos already in D1
     syncFromSnyk: () =>
       req<{ found: number; synced: number; message: string }>(
         'POST', '/api/repos/snyk-sync'
@@ -38,8 +44,10 @@ export const api = {
   },
 
   vulns: {
-    list: (filters?: { severity?: string; fixable?: string; repo_id?: string }) => {
-      const params = new URLSearchParams(filters as Record<string, string>).toString();
+    list: (filters?: { severity?: string; fixable?: string; repo_id?: string; source?: string }) => {
+      const params = new URLSearchParams(
+        Object.fromEntries(Object.entries(filters ?? {}).filter(([, v]) => v)) as Record<string, string>
+      ).toString();
       return req<{ vulnerabilities: Vulnerability[] }>('GET', `/api/vulns${params ? `?${params}` : ''}`);
     },
     summary: () => req<{ summary: VulnSummary }>('GET', '/api/vulns/summary'),
@@ -50,7 +58,6 @@ export const api = {
       }),
   },
 
-  // NEW — SonarCloud code quality
   quality: {
     all: () => req<{ quality: CodeQuality[] }>('GET', '/api/quality'),
     history: (repoId: string) => req<{ history: CodeQuality[] }>('GET', `/api/quality/${repoId}/history`),

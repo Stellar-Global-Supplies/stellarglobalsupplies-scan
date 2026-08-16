@@ -14,39 +14,28 @@ export default function Dashboard() {
   const [quality,  setQuality]  = useState<CodeQuality[]>([]);
   const [summary,  setSummary]  = useState<VulnSummary>({ critical:0, high:0, medium:0, low:0 });
   const [loading,  setLoading]  = useState(true);
-  const [scanning, setScanning] = useState(false);
-  const [syncing,  setSyncing]  = useState(false);
-  const [sonarSync, setSonarSync] = useState(false);
+  const [scanning,   setScanning]   = useState(false);
+  const [syncing,    setSyncing]    = useState(false);
+  const [githubSync, setGithubSync] = useState(false);
+  const [sonarSync,  setSonarSync]  = useState(false);
   const [error,    setError]    = useState<string | null>(null);
 
   // Vuln filters
-  const [sevFilter,  setSevFilter]  = useState('all');
-  const [fixFilter,  setFixFilter]  = useState('all');
-  const [repoFilter, setRepoFilter] = useState('all');
+  const [sevFilter,    setSevFilter]    = useState('all');
+  const [fixFilter,    setFixFilter]    = useState('all');
+  const [repoFilter,   setRepoFilter]   = useState('all');
+  const [sourceFilter, setSourceFilter] = useState('all');
 
   // Quality filters
   const [qualityFilter, setQualityFilter] = useState('all');  // A|B|C|D|E|all
 
-  const loadData = useCallback(async (autoSync = false) => {
+  const loadData = useCallback(async () => {
     try {
       const [reposRes, summaryRes] = await Promise.all([
         api.repos.list(),
         api.vulns.summary(),
       ]);
-
-      if (reposRes.repos.length === 0 && autoSync) {
-        setSyncing(true);
-        try {
-          await api.repos.syncFromSnyk();
-          const refreshed = await api.repos.list();
-          setRepos(refreshed.repos);
-        } finally {
-          setSyncing(false);
-        }
-      } else {
-        setRepos(reposRes.repos);
-      }
-
+      setRepos(reposRes.repos);
       setSummary(summaryRes.summary);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load');
@@ -57,34 +46,56 @@ export default function Dashboard() {
 
   const loadVulns = useCallback(async () => {
     const filters: Record<string, string> = {};
-    if (sevFilter  !== 'all') filters.severity = sevFilter;
-    if (fixFilter  !== 'all') filters.fixable  = String(fixFilter === 'fixable');
-    if (repoFilter !== 'all') filters.repo_id  = repoFilter;
+    if (sevFilter    !== 'all') filters.severity = sevFilter;
+    if (fixFilter    !== 'all') filters.fixable  = String(fixFilter === 'fixable');
+    if (repoFilter   !== 'all') filters.repo_id  = repoFilter;
+    if (sourceFilter !== 'all') filters.source   = sourceFilter;
     const res = await api.vulns.list(filters);
     setVulns(res.vulnerabilities);
-  }, [sevFilter, fixFilter, repoFilter]);
+  }, [sevFilter, fixFilter, repoFilter, sourceFilter]);
 
   const loadQuality = useCallback(async () => {
     const res = await api.quality.all();
     setQuality(res.quality);
   }, []);
 
-  useEffect(() => { loadData(true); }, [loadData]);
+  useEffect(() => { loadData(); }, [loadData]);
 
   useEffect(() => {
     if (tab === 'vulns')   loadVulns();
     if (tab === 'quality') loadQuality();
   }, [tab, loadVulns, loadQuality]);
 
-  // Poll while scans are active
+  // Poll while scans are active; once they finish also reload quality + vulns
   useEffect(() => {
     const hasActive = repos.some(r =>
       r.latest_scan?.status === 'queued' || r.latest_scan?.status === 'scanning'
     );
     if (!hasActive) return;
-    const timer = setInterval(loadData, 4000);
+
+    const timer = setInterval(async () => {
+      await loadData();
+      // After loadData repos state will update on next render; the side-effect
+      // below handles the transition. Proactively reload quality + vulns on
+      // every poll tick while scans are running so the quality tab stays live.
+      loadQuality();
+      loadVulns();
+    }, 4000);
     return () => clearInterval(timer);
-  }, [repos, loadData]);
+  }, [repos, loadData, loadQuality, loadVulns]);
+
+  async function syncFromGitHub() {
+    setGithubSync(true);
+    try {
+      const res = await api.repos.syncFromGitHub();
+      await loadData();
+      alert(res.message);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'GitHub sync failed');
+    } finally {
+      setGithubSync(false);
+    }
+  }
 
   async function syncFromSnyk() {
     setSyncing(true);
@@ -103,11 +114,20 @@ export default function Dashboard() {
     setSonarSync(true);
     try {
       const res = await api.quality.sync();
-      alert(res.message + (res.synced === 0
-        ? '\n\nTip: Make sure repos are imported at sonarcloud.io first, then click Scan All to fetch metrics.'
-        : '\n\nNow click Scan All to fetch quality metrics for linked repos.'));
-      // Always reload quality after a sync attempt so the tab reflects new links
+      // Reload repos so sonar_project_key fields are fresh (affects missing-sonar banner)
+      await loadData();
       await loadQuality();
+      if (res.synced === 0) {
+        alert(
+          `${res.message}\n\n` +
+          `No repos were matched.\n\n` +
+          `Make sure repos are imported at sonarcloud.io first, then try again.\n` +
+          `Project keys must contain the repo name (e.g. "org_reponame").`
+        );
+      } else {
+        alert(`${res.message}\n\nNow click ⚡ Scan All to fetch quality metrics for the linked repos.`);
+        setTab('quality');
+      }
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : 'SonarCloud sync failed');
     } finally {
@@ -119,8 +139,11 @@ export default function Dashboard() {
     setScanning(true);
     try {
       const res = await api.scans.scanAll();
-      alert(res.message);
+      // Reload repo list so polling detects the queued status and starts
       await loadData();
+      // Switch to quality tab so user sees results populate automatically
+      setTab('quality');
+      alert(res.message + '\n\nSwitching to Code Quality tab — results will appear as scans complete.');
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : 'Scan failed');
     } finally {
@@ -193,12 +216,17 @@ export default function Dashboard() {
           </div>
         </div>
         <div style={s.headerRight}>
+          <button onClick={syncFromGitHub} disabled={githubSync} style={s.syncBtn}
+            title="Pull latest repos from GitHub org into the database">
+            {githubSync ? '⏳ Syncing…' : '🐙 Sync GitHub'}
+          </button>
           <button onClick={syncSonarCloud} disabled={sonarSync} style={s.sonarBtn}
             title="Match SonarCloud projects to repos in D1">
             {sonarSync ? '⏳ Syncing…' : '📊 Sync SonarCloud'}
           </button>
-          <button onClick={syncFromSnyk} disabled={syncing} style={s.syncBtn}>
-            {syncing ? '⏳ Syncing…' : '🔄 Sync from Snyk'}
+          <button onClick={syncFromSnyk} disabled={syncing} style={s.syncBtn}
+            title="Match Snyk projects to repos in D1 (enables Fix PRs)">
+            {syncing ? '⏳ Syncing…' : '🔄 Sync Snyk'}
           </button>
           <button onClick={scanAll} disabled={scanning} style={s.scanAllBtn}>
             {scanning ? '⏳ Queuing…' : '⚡ Scan All'}
@@ -268,19 +296,25 @@ export default function Dashboard() {
       {tab === 'vulns' && (
         <>
           <div style={s.filters}>
-            <select value={sevFilter}  onChange={e => setSevFilter(e.target.value)}  style={s.select}>
+            <select value={sevFilter}    onChange={e => setSevFilter(e.target.value)}    style={s.select}>
               <option value="all">All severities</option>
               <option value="critical">Critical</option>
               <option value="high">High</option>
               <option value="medium">Medium</option>
               <option value="low">Low</option>
             </select>
-            <select value={fixFilter}  onChange={e => setFixFilter(e.target.value)}  style={s.select}>
+            <select value={fixFilter}    onChange={e => setFixFilter(e.target.value)}    style={s.select}>
               <option value="all">All issues</option>
               <option value="fixable">Fixable only</option>
               <option value="manual">Manual fix only</option>
             </select>
-            <select value={repoFilter} onChange={e => setRepoFilter(e.target.value)} style={s.select}>
+            <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)} style={s.select}>
+              <option value="all">All sources</option>
+              <option value="snyk">Snyk</option>
+              <option value="github_dependabot">Dependabot</option>
+              <option value="github_code_scanning">Code Scanning</option>
+            </select>
+            <select value={repoFilter}   onChange={e => setRepoFilter(e.target.value)}   style={s.select}>
               <option value="all">All repos</option>
               {repos.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>

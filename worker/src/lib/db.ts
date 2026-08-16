@@ -204,7 +204,20 @@ export async function getAllVulnerabilities(
   db: D1Database,
   filters: { severity?: string; fixable?: string; repo_id?: string; source?: string }
 ): Promise<Vulnerability[]> {
-  let query = 'SELECT v.*, r.name as repo_name FROM vulnerabilities v JOIN repos r ON v.repo_id = r.id WHERE 1=1';
+  // Only return vulns from the latest *done* scan per repo to prevent duplication
+  // when the same repo is re-scanned multiple times.
+  let query = `
+    SELECT v.*, r.name as repo_name
+    FROM vulnerabilities v
+    JOIN repos r ON v.repo_id = r.id
+    JOIN (
+      SELECT repo_id, MAX(finished_at) as max_finished
+      FROM scan_runs
+      WHERE status = 'done'
+      GROUP BY repo_id
+    ) latest_scan ON v.repo_id = latest_scan.repo_id
+    JOIN scan_runs sr ON v.scan_run_id = sr.id AND sr.finished_at = latest_scan.max_finished
+    WHERE 1=1`;
   const bindings: unknown[] = [];
 
   if (filters.severity) { query += ' AND v.severity = ?'; bindings.push(filters.severity); }
@@ -221,8 +234,21 @@ export async function getAllVulnerabilities(
 }
 
 export async function getVulnSummary(db: D1Database) {
+  // Count vulns from the latest done scan per repo only (no duplication across re-scans).
+  // Count ALL severities regardless of fix_pr_url so the summary reflects real exposure.
   const { results } = await db
-    .prepare(`SELECT severity, COUNT(*) as count FROM vulnerabilities WHERE fix_pr_url IS NULL GROUP BY severity`)
+    .prepare(`
+      SELECT v.severity, COUNT(*) as count
+      FROM vulnerabilities v
+      JOIN (
+        SELECT repo_id, MAX(finished_at) as max_finished
+        FROM scan_runs
+        WHERE status = 'done'
+        GROUP BY repo_id
+      ) latest_scan ON v.repo_id = latest_scan.repo_id
+      JOIN scan_runs sr ON v.scan_run_id = sr.id AND sr.finished_at = latest_scan.max_finished
+      GROUP BY v.severity
+    `)
     .all<{ severity: string; count: number }>();
 
   const summary = { critical: 0, high: 0, medium: 0, low: 0 };
