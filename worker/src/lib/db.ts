@@ -268,12 +268,11 @@ export async function getLatestQualityAll(db: D1Database): Promise<(CodeQuality 
     SELECT cq.*, r.name as repo_name
     FROM code_quality cq
     JOIN repos r ON cq.repo_id = r.id
-    WHERE cq.id IN (
-      SELECT id FROM code_quality cq2
-      WHERE cq2.repo_id = cq.repo_id
-      ORDER BY created_at DESC
-      LIMIT 1
-    )
+    JOIN (
+      SELECT repo_id, MAX(created_at) as max_created_at
+      FROM code_quality
+      GROUP BY repo_id
+    ) latest ON cq.repo_id = latest.repo_id AND cq.created_at = latest.max_created_at
     ORDER BY r.name
   `).all<CodeQuality & { repo_name: string }>();
   return results;

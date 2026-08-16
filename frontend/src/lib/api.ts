@@ -21,8 +21,8 @@ export const api = {
   repos: {
     list: () => req<{ repos: RepoWithStatus[] }>('GET', '/api/repos'),
     syncFromSnyk: () =>
-      req<{ synced: number; inserted: number; updated: number; message: string }>(
-        'POST', '/api/repos/sync'
+      req<{ found: number; synced: number; message: string }>(
+        'POST', '/api/repos/snyk-sync'
       ),
   },
 
@@ -30,7 +30,7 @@ export const api = {
     scanOne: (repoId: string) =>
       req<{ scan_run_id: string; status: string }>('POST', `/api/scans/repo/${repoId}`),
     scanAll: () =>
-      req<{ queued: number; skipped: number; message: string }>('POST', '/api/scans/all'),
+      req<{ queued: number; message: string }>('POST', '/api/scans/all'),
     status: (scanRunId: string) =>
       req<{ scan: ScanRun }>('GET', `/api/scans/status/${scanRunId}`),
     history: (repoId: string) =>
