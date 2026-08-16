@@ -23,8 +23,7 @@ export async function upsertReposFromGitHub(
   const stmt = db.prepare(`
     INSERT INTO repos (id, name, github_url)
     VALUES (?, ?, ?)
-    ON CONFLICT (github_url) DO UPDATE SET
-      name = excluded.name
+    ON CONFLICT (github_url) DO UPDATE SET name = excluded.name
   `);
 
   const batch = repos.map(r => {
@@ -39,19 +38,42 @@ export async function upsertReposFromGitHub(
   return { inserted: Math.min(repos.length, total), updated: repos.length - Math.min(repos.length, total) };
 }
 
-// Sync SonarCloud project keys into repos — matched by name
+// Match Snyk project IDs to repos by GitHub URL or name
+export async function syncSnykProjectIds(
+  db: D1Database,
+  snykProjects: Array<{ snykProjectId: string; name: string; githubUrl: string }>
+): Promise<number> {
+  const repos = await getAllRepos(db);
+  let synced = 0;
+  const stmt  = db.prepare('UPDATE repos SET snyk_project_id = ? WHERE id = ?');
+  const batch = [];
+
+  for (const sp of snykProjects) {
+    const match = repos.find(r =>
+      r.github_url.toLowerCase() === sp.githubUrl.toLowerCase() ||
+      r.name.toLowerCase()       === sp.name.toLowerCase()
+    );
+    if (match) {
+      batch.push(stmt.bind(sp.snykProjectId, match.id));
+      synced++;
+    }
+  }
+
+  if (batch.length > 0) await db.batch(batch);
+  return synced;
+}
+
+// Sync SonarCloud project keys into repos
 export async function syncSonarProjectKeys(
   db: D1Database,
   sonarProjects: Array<{ projectKey: string; name: string; githubUrl: string }>
 ): Promise<number> {
   const repos = await getAllRepos(db);
   let synced = 0;
-
-  const stmt = db.prepare('UPDATE repos SET sonar_project_key = ? WHERE id = ?');
+  const stmt  = db.prepare('UPDATE repos SET sonar_project_key = ? WHERE id = ?');
   const batch = [];
 
   for (const sonar of sonarProjects) {
-    // Match by GitHub URL first, fall back to name comparison
     const match = repos.find(r =>
       r.github_url.toLowerCase() === sonar.githubUrl.toLowerCase() ||
       r.name.toLowerCase()       === sonar.name.toLowerCase()
@@ -64,14 +86,6 @@ export async function syncSonarProjectKeys(
 
   if (batch.length > 0) await db.batch(batch);
   return synced;
-}
-
-export async function updateRepoSnykId(db: D1Database, repoId: string, snykProjectId: string): Promise<void> {
-  await db.prepare('UPDATE repos SET snyk_project_id = ? WHERE id = ?').bind(snykProjectId, repoId).run();
-}
-
-export async function touchRepoLastScanned(db: D1Database, repoId: string): Promise<void> {
-  await db.prepare('UPDATE repos SET last_scanned_at = unixepoch() WHERE id = ?').bind(repoId).run();
 }
 
 // ── Scan Runs ─────────────────────────────────────────────────────────────────
@@ -117,22 +131,35 @@ export async function insertVulnerabilities(
   db: D1Database,
   scanRunId: string,
   repoId: string,
-  vulns: Omit<Vulnerability, 'id' | 'scan_run_id' | 'repo_id' | 'created_at' | 'fix_pr_url'>[]
+  vulns: Array<{
+    github_alert_id?: number | null;
+    snyk_issue_id?:   string | null;
+    cve:              string | null;
+    title:            string;
+    severity:         string;
+    package_name:     string;
+    from_version:     string;
+    to_version:       string | null;
+    fixable:          number;
+    source:           string;
+  }>
 ): Promise<void> {
   if (vulns.length === 0) return;
 
   const stmt = db.prepare(`
     INSERT INTO vulnerabilities
-      (id, scan_run_id, repo_id, github_alert_id, cve, title, severity,
-       package_name, from_version, to_version, fixable, source)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, scan_run_id, repo_id, github_alert_id, snyk_issue_id, cve, title,
+       severity, package_name, from_version, to_version, fixable, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   await db.batch(
     vulns.map(v =>
       stmt.bind(
         nanoid(), scanRunId, repoId,
-        v.github_alert_id, v.cve, v.title, v.severity,
+        v.github_alert_id ?? null,
+        v.snyk_issue_id   ?? null,
+        v.cve, v.title, v.severity,
         v.package_name, v.from_version, v.to_version, v.fixable, v.source
       )
     )
@@ -141,14 +168,15 @@ export async function insertVulnerabilities(
 
 export async function getAllVulnerabilities(
   db: D1Database,
-  filters: { severity?: string; fixable?: string; repo_id?: string }
+  filters: { severity?: string; fixable?: string; repo_id?: string; source?: string }
 ): Promise<Vulnerability[]> {
   let query = 'SELECT v.*, r.name as repo_name FROM vulnerabilities v JOIN repos r ON v.repo_id = r.id WHERE 1=1';
   const bindings: unknown[] = [];
 
   if (filters.severity) { query += ' AND v.severity = ?'; bindings.push(filters.severity); }
-  if (filters.fixable !== undefined) { query += ' AND v.fixable = ?'; bindings.push(filters.fixable === 'true' ? 1 : 0); }
-  if (filters.repo_id) { query += ' AND v.repo_id = ?'; bindings.push(filters.repo_id); }
+  if (filters.fixable)  { query += ' AND v.fixable = ?';  bindings.push(filters.fixable === 'true' ? 1 : 0); }
+  if (filters.repo_id)  { query += ' AND v.repo_id = ?';  bindings.push(filters.repo_id); }
+  if (filters.source)   { query += ' AND v.source = ?';   bindings.push(filters.source); }
 
   query += ` ORDER BY CASE v.severity
     WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4
@@ -170,8 +198,16 @@ export async function getVulnSummary(db: D1Database) {
   return summary;
 }
 
-export async function updateFixPRUrl(db: D1Database, githubAlertId: number, prUrl: string): Promise<void> {
-  await db.prepare('UPDATE vulnerabilities SET fix_pr_url = ? WHERE github_alert_id = ?').bind(prUrl, githubAlertId).run();
+// Update fix PR URL by Snyk issue ID
+export async function updateFixPRUrlBySnykId(
+  db: D1Database,
+  snykIssueId: string,
+  prUrl: string
+): Promise<void> {
+  await db
+    .prepare('UPDATE vulnerabilities SET fix_pr_url = ? WHERE snyk_issue_id = ?')
+    .bind(prUrl, snykIssueId)
+    .run();
 }
 
 // ── Code Quality ──────────────────────────────────────────────────────────────
@@ -192,21 +228,13 @@ export async function insertCodeQuality(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     nanoid(), repoId, scanRunId, sonarProjectKey,
-    metrics.reliabilityRating,
-    metrics.maintainabilityRating,
-    metrics.securityRating,
-    metrics.codeSmells,
-    metrics.duplicatedLinesPct,
-    metrics.complexity,
-    metrics.cognitiveComplexity,
-    metrics.coveragePct,
-    metrics.linesOfCode,
-    metrics.securityHotspots,
-    metrics.technicalDebtMins
+    metrics.reliabilityRating, metrics.maintainabilityRating, metrics.securityRating,
+    metrics.codeSmells, metrics.duplicatedLinesPct, metrics.complexity,
+    metrics.cognitiveComplexity, metrics.coveragePct, metrics.linesOfCode,
+    metrics.securityHotspots, metrics.technicalDebtMins
   ).run();
 }
 
-// Latest quality snapshot per repo (for the dashboard scorecard view)
 export async function getLatestQualityAll(db: D1Database): Promise<(CodeQuality & { repo_name: string })[]> {
   const { results } = await db.prepare(`
     SELECT cq.*, r.name as repo_name
@@ -223,15 +251,14 @@ export async function getLatestQualityAll(db: D1Database): Promise<(CodeQuality 
   return results;
 }
 
-// Full quality history for a single repo
-export async function getQualityHistory(
-  db: D1Database,
-  repoId: string,
-  limit = 10
-): Promise<CodeQuality[]> {
+export async function getQualityHistory(db: D1Database, repoId: string, limit = 10): Promise<CodeQuality[]> {
   const { results } = await db
     .prepare('SELECT * FROM code_quality WHERE repo_id = ? ORDER BY created_at DESC LIMIT ?')
     .bind(repoId, limit)
     .all<CodeQuality>();
   return results;
+}
+
+export async function touchRepoLastScanned(db: D1Database, repoId: string): Promise<void> {
+  await db.prepare('UPDATE repos SET last_scanned_at = unixepoch() WHERE id = ?').bind(repoId).run();
 }

@@ -1,5 +1,6 @@
 import { Env, QueueMessage } from '../types';
 import { fetchDependabotAlerts, fetchCodeScanningAlerts, parseDependabotAlert, parseCodeScanningAlert } from '../lib/github';
+import { fetchSnykIssues, parseSnykIssue } from '../lib/snyk';
 import { fetchProjectMetrics } from '../lib/sonar';
 import {
   updateScanStatus,
@@ -13,7 +14,13 @@ export async function handleQueue(
   batch: MessageBatch<QueueMessage>,
   env: Env
 ): Promise<void> {
-  // env.GITHUB_TOKEN is a plain string — resolved by CF from [[secrets_store_secrets]]
+  // Resolve all secrets once per batch — .get() is async for [[secrets_store_secrets]]
+  const [githubToken, snykToken, snykOrgId, sonarToken] = await Promise.all([
+    env.GITHUB_TOKEN.get(),
+    env.SNYK_API_TOKEN.get(),
+    env.SNYK_ORG_ID.get(),
+    env.SONARCLOUD_TOKEN.get(),
+  ]);
 
   for (const message of batch.messages) {
     const job = message.body;
@@ -27,44 +34,57 @@ export async function handleQueue(
       const repo = await getRepo(env.DB, job.repo_id);
       if (!repo) throw new Error(`Repo not found: ${job.repo_id}`);
 
-      // Extract owner/repo from github_url
       const url = new URL(repo.github_url);
       const [, owner, repoName] = url.pathname.split('/');
 
-      // ── 1. GitHub Dependabot Alerts — dependency CVEs ─────────────────────
-      const dependabotAlerts = await fetchDependabotAlerts(owner, repoName, env.GITHUB_TOKEN);
-      const dependabotVulns = dependabotAlerts.map(parseDependabotAlert);
+      const allVulns: ReturnType<typeof parseDependabotAlert>[] = [];
 
-      // ── 2. GitHub Code Scanning Alerts — SAST ─────────────────────────────
-      const codeScanningAlerts = await fetchCodeScanningAlerts(owner, repoName, env.GITHUB_TOKEN);
-      const codeScanningVulns = codeScanningAlerts.map(parseCodeScanningAlert);
+      // ── 1. GitHub Dependabot — dependency CVEs (free, public repos) ───────
+      try {
+        const alerts = await fetchDependabotAlerts(owner, repoName, githubToken);
+        allVulns.push(...alerts.map(parseDependabotAlert));
+        console.log(`[Queue] Dependabot: ${alerts.length} alerts in ${repo.name}`);
+      } catch (e) {
+        console.warn(`[Queue] Dependabot skipped for ${repo.name}:`, e);
+      }
 
-      const allVulns = [...dependabotVulns, ...codeScanningVulns];
-      await insertVulnerabilities(env.DB, job.scan_run_id, job.repo_id, allVulns);
-      console.log(`[Queue] GitHub: ${allVulns.length} vulns in ${job.repo_id}`);
+      // ── 2. GitHub Code Scanning — SAST (free, public repos) ───────────────
+      try {
+        const alerts = await fetchCodeScanningAlerts(owner, repoName, githubToken);
+        allVulns.push(...alerts.map(parseCodeScanningAlert));
+        console.log(`[Queue] Code scanning: ${alerts.length} alerts in ${repo.name}`);
+      } catch (e) {
+        console.warn(`[Queue] Code scanning skipped for ${repo.name}:`, e);
+      }
 
-      // ── 3. SonarCloud — code quality metrics ──────────────────────────────
-      if (repo?.sonar_project_key) {
+      // ── 3. Snyk — dependency CVEs + SAST with Fix PR support ──────────────
+      // Free tier on public repos: unlimited scans + Fix PRs
+      if (repo.snyk_project_id) {
         try {
-          const metrics = await fetchProjectMetrics(
-            repo.sonar_project_key,
-            env.SONARCLOUD_TOKEN
-          );
-          await insertCodeQuality(
-            env.DB,
-            job.repo_id,
-            job.scan_run_id,
-            repo.sonar_project_key,
-            metrics
-          );
-          console.log(`[Queue] SonarCloud: quality saved for ${job.repo_id}`);
-        } catch (sonarErr: unknown) {
-          // SonarCloud failure doesn't fail the whole scan job
-          console.warn(`[Queue] SonarCloud failed for ${job.repo_id}:`, sonarErr);
+          const issues = await fetchSnykIssues(snykOrgId, snykToken, repo.snyk_project_id);
+          allVulns.push(...issues.map(parseSnykIssue));
+          console.log(`[Queue] Snyk: ${issues.length} issues in ${repo.name}`);
+        } catch (e) {
+          console.warn(`[Queue] Snyk skipped for ${repo.name}:`, e);
+        }
+      } else {
+        console.log(`[Queue] No snyk_project_id for ${repo.name} — run /api/repos/snyk-sync`);
+      }
+
+      await insertVulnerabilities(env.DB, job.scan_run_id, job.repo_id, allVulns);
+
+      // ── 4. SonarCloud — code quality metrics ──────────────────────────────
+      if (repo.sonar_project_key) {
+        try {
+          const metrics = await fetchProjectMetrics(repo.sonar_project_key, sonarToken);
+          await insertCodeQuality(env.DB, job.repo_id, job.scan_run_id, repo.sonar_project_key, metrics);
+          console.log(`[Queue] SonarCloud: quality saved for ${repo.name}`);
+        } catch (e) {
+          console.warn(`[Queue] SonarCloud skipped for ${repo.name}:`, e);
         }
       }
 
-      // ── 4. Done ────────────────────────────────────────────────────────────
+      // ── 5. Done ────────────────────────────────────────────────────────────
       await updateScanStatus(env.DB, job.scan_run_id, 'done', { vulnCount: allVulns.length });
       await touchRepoLastScanned(env.DB, job.repo_id);
       message.ack();

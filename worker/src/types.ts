@@ -1,15 +1,22 @@
-// Each [[secrets_store_secrets]] binding lands directly as a string on env.*
-// No .get() call needed — CF resolves them before the Worker runs
+// [[secrets_store_secrets]] bindings are NOT plain strings.
+// CF resolves them as SecretBinding objects — must call await .get() to read value.
+export interface SecretBinding {
+  get(): Promise<string>;
+}
+
 export interface Env {
-  DB:           D1Database;
-  SCAN_QUEUE:   Queue;
+  DB:          D1Database;
+  SCAN_QUEUE:  Queue;
 
-  // Secrets — bound individually via [[secrets_store_secrets]] in wrangler.toml
-  GITHUB_TOKEN:        string;
-  SONARCLOUD_TOKEN:    string;
-  SONARCLOUD_ORG:      string;
+  // Secrets — bound via [[secrets_store_secrets]] in wrangler.toml
+  // Usage: const token = await env.GITHUB_TOKEN.get()
+  GITHUB_TOKEN:     SecretBinding;
+  SONARCLOUD_TOKEN: SecretBinding;
+  SONARCLOUD_ORG:   SecretBinding;
+  SNYK_API_TOKEN:   SecretBinding;  // NEW
+  SNYK_ORG_ID:      SecretBinding;  // NEW
 
-  // Non-secret vars from [vars]
+  // Plain vars from [vars] — still regular strings
   FRONTEND_URL: string;
 }
 
@@ -17,6 +24,7 @@ export interface Repo {
   id:                string;
   name:              string;
   github_url:        string;
+  snyk_project_id:   string | null;   // populated by POST /api/repos/snyk-sync
   sonar_project_key: string | null;
   last_scanned_at:   number | null;
   created_at:        number;
@@ -39,6 +47,7 @@ export interface Vulnerability {
   scan_run_id:     string;
   repo_id:         string;
   github_alert_id: number | null;
+  snyk_issue_id:   string | null;   // NEW — for fix PR lookup
   cve:             string | null;
   title:           string;
   severity:        'critical' | 'high' | 'medium' | 'low';

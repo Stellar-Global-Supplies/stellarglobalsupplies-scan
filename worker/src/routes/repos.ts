@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { Env } from '../types';
-import { getAllRepos, getRepo, upsertReposFromGitHub } from '../lib/db';
+import { getAllRepos, getRepo, upsertReposFromGitHub, syncSnykProjectIds } from '../lib/db';
 import { fetchOrgRepos } from '../lib/github';
+import { fetchSnykProjects } from '../lib/snyk';
 
 const repos = new Hono<{ Bindings: Env }>();
 
@@ -27,17 +28,14 @@ repos.get('/:id', async (c) => {
   return c.json({ repo });
 });
 
-// POST /api/repos/sync — pulls all GitHub org repos into D1
+// POST /api/repos/sync — pull all GitHub org repos into D1
 repos.post('/sync', async (c) => {
   try {
-    // env.GITHUB_TOKEN is a direct string from [[secrets_store_secrets]]
-    const githubRepos = await fetchOrgRepos('Stellar-Global-Supplies', c.env.GITHUB_TOKEN);
+    const githubToken = await c.env.GITHUB_TOKEN.get();
+    const githubRepos = await fetchOrgRepos('Stellar-Global-Supplies', githubToken);
 
     if (githubRepos.length === 0) {
-      return c.json({
-        message: 'No repos found in GitHub org.',
-        synced:  0,
-      });
+      return c.json({ message: 'No repos found in GitHub org.', synced: 0 });
     }
 
     const result = await upsertReposFromGitHub(c.env.DB, githubRepos);
@@ -49,6 +47,37 @@ repos.post('/sync', async (c) => {
     });
   } catch (err: unknown) {
     return c.json({ error: err instanceof Error ? err.message : 'Sync failed' }, 500);
+  }
+});
+
+// POST /api/repos/snyk-sync
+// Fetches all existing Snyk projects and matches them to repos in D1
+// No import step needed — your repos are already in Snyk
+// Free tier on public repos: unlimited
+repos.post('/snyk-sync', async (c) => {
+  try {
+    const [snykToken, snykOrgId] = await Promise.all([
+      c.env.SNYK_API_TOKEN.get(),
+      c.env.SNYK_ORG_ID.get(),
+    ]);
+
+    const snykProjects = await fetchSnykProjects(snykOrgId, snykToken);
+
+    if (snykProjects.length === 0) {
+      return c.json({
+        message: 'No GitHub-backed projects found in your Snyk org.',
+        synced:  0,
+      });
+    }
+
+    const synced = await syncSnykProjectIds(c.env.DB, snykProjects);
+    return c.json({
+      found:   snykProjects.length,
+      synced,
+      message: `Found ${snykProjects.length} Snyk projects, matched ${synced} repos in D1.`,
+    });
+  } catch (err: unknown) {
+    return c.json({ error: err instanceof Error ? err.message : 'Snyk sync failed' }, 500);
   }
 });
 
