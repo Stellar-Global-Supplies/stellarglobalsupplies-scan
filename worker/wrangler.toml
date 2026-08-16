@@ -35,17 +35,11 @@ FRONTEND_URL = "https://scan.stellarglobalsupplies.com"
 # Uses your existing store: 2556bcd9458349f6b4ff2a3fc93bdba1
 #
 # Add secrets to the store:
-#   wrangler secrets-store secret create SUPABASE_JWT_SECRET --store-id 2556bcd9458349f6b4ff2a3fc93bdba1 --value "..."
 #   wrangler secrets-store secret create SNYK_API_TOKEN      --store-id 2556bcd9458349f6b4ff2a3fc93bdba1 --value "..."
 #   wrangler secrets-store secret create SNYK_ORG_ID         --store-id 2556bcd9458349f6b4ff2a3fc93bdba1 --value "..."
 #   wrangler secrets-store secret create GITHUB_TOKEN        --store-id 2556bcd9458349f6b4ff2a3fc93bdba1 --value "..."
 #   wrangler secrets-store secret create SONARCLOUD_TOKEN    --store-id 2556bcd9458349f6b4ff2a3fc93bdba1 --value "..."
 #   wrangler secrets-store secret create SONARCLOUD_ORG      --store-id 2556bcd9458349f6b4ff2a3fc93bdba1 --value "..."
-
-[[secrets_store_secrets]]
-binding     = "SUPABASE_JWT_SECRET"
-store_id    = "2556bcd9458349f6b4ff2a3fc93bdba1"
-secret_name = "SUPABASE_JWT_SECRET"
 
 [[secrets_store_secrets]]
 binding     = "SNYK_API_TOKEN"

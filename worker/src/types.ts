@@ -5,7 +5,6 @@ export interface Env {
   SCAN_QUEUE:   Queue;
 
   // Secrets — bound individually via [[secrets_store_secrets]] in wrangler.toml
-  SUPABASE_JWT_SECRET: string;
   SNYK_API_TOKEN:      string;
   SNYK_ORG_ID:         string;
   GITHUB_TOKEN:        string;

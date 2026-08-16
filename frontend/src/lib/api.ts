@@ -1,16 +1,10 @@
-import { getAuthToken } from './supabase';
-
 const API_URL = import.meta.env.VITE_API_URL as string;
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const token = await getAuthToken();
-  if (!token) throw new Error('Not authenticated');
-
   const res = await fetch(`${API_URL}${path}`, {
     method,
     headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type':  'application/json',
+      'Content-Type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
   });

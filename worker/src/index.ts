@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { cors }  from 'hono/cors';
-import { Env, JWTPayload, QueueMessage } from './types';
-import { authenticate } from './lib/auth';
+import { Env, QueueMessage } from './types';
 import { handleQueue }  from './queue/consumer';
 import { handleCron }   from './cron/scheduler';
 import repos   from './routes/repos';
@@ -9,9 +8,7 @@ import scans   from './routes/scans';
 import vulns   from './routes/vulns';
 import quality from './routes/quality';
 
-// Secrets are direct env.* strings — no resolveSecrets() needed
-type HonoVars = { user: JWTPayload };
-const app = new Hono<{ Bindings: Env; Variables: HonoVars }>();
+const app = new Hono<{ Bindings: Env }>();
 
 // ── CORS ───────────────────────────────────────────────────────────────────────
 app.use('/api/*', cors({
@@ -26,14 +23,6 @@ app.use('/api/*', cors({
   allowMethods: ['GET', 'POST', 'OPTIONS'],
   maxAge: 600,
 }));
-
-// ── Auth middleware — SUPABASE_JWT_SECRET is env.* directly ───────────────────
-app.use('/api/*', async (c, next) => {
-  const user = await authenticate(c.req.raw, c.env.SUPABASE_JWT_SECRET);
-  if (!user) return c.json({ error: 'Unauthorized' }, 401);
-  c.set('user', user);
-  return next();
-});
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.route('/api/repos',   repos);
