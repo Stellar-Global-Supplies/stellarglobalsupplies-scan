@@ -96,36 +96,27 @@ export async function fetchDependabotAlerts(
   repo: string,
   token: string
 ): Promise<GitHubDependabotAlert[]> {
-  const alerts: GitHubDependabotAlert[] = [];
-  let page = 1;
+  const url =
+    `${GITHUB_API}/repos/${owner}/${repo}/dependabot/alerts?per_page=100&state=open`;
 
-  while (true) {
-    const url = `${GITHUB_API}/repos/${owner}/${repo}/dependabot/alerts?per_page=100&page=${page}&state=open`;
-    const res = await fetch(url, { headers: githubHeaders(token) });
+  const res = await fetch(url, { headers: githubHeaders(token) });
 
-    if (res.status === 404) {
-      // Dependabot not enabled or repo not found — normal, skip silently
-      break;
-    }
-    if (res.status === 403 || res.status === 451) {
-      // 403 = token lacks security_events scope or Dependabot not enabled at org level
-      // 451 = unavailable for legal reasons / GHES restriction
-      const body = await res.text();
-      throw new Error(`Dependabot alerts blocked (HTTP ${res.status}): ${body}`);
-    }
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Dependabot alerts failed (HTTP ${res.status}): ${body}`);
-    }
-
-    const body = await res.json<GitHubDependabotAlert[]>();
-    alerts.push(...body);
-
-    if (body.length < 100) break;
-    page++;
+  if (res.status === 404) {
+    // Dependabot not enabled or repo not found — normal, skip silently
+    return [];
   }
 
-  return alerts;
+  if (res.status === 403 || res.status === 451) {
+    const body = await res.text();
+    throw new Error(`Dependabot alerts blocked (HTTP ${res.status}): ${body}`);
+  }
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Dependabot alerts failed (HTTP ${res.status}): ${body}`);
+  }
+
+  return await res.json<GitHubDependabotAlert[]>();
 }
 
 // Fetch Code Scanning alerts for a repo (SAST vulnerabilities)
