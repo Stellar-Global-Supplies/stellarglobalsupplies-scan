@@ -1,0 +1,25 @@
+{
+  "name": "scan-worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev":          "wrangler dev --local",
+    "deploy":       "wrangler deploy",
+    "db:create":    "wrangler d1 create scan-db",
+    "db:migrate":   "wrangler d1 execute scan-db --file=../migrations/0001_init.sql",
+    "db:seed":      "wrangler d1 execute scan-db --file=../migrations/0002_seed_repos.sql",
+    "db:migrate:remote": "wrangler d1 execute scan-db --remote --file=../migrations/0001_init.sql",
+    "db:seed:remote":    "wrangler d1 execute scan-db --remote --file=../migrations/0002_seed_repos.sql",
+    "queue:create": "wrangler queues create scan-queue && wrangler queues create scan-queue-dlq",
+    "setup":        "npm run db:create && npm run queue:create && npm run db:migrate && npm run db:seed",
+    "type-check":   "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.4.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240925.0",
+    "typescript":                "^5.5.4",
+    "wrangler":                  "^3.78.0"
+  }
+}
