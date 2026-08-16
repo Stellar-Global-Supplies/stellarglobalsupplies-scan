@@ -1,60 +1,113 @@
-// Vulnerability table component
-import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
 import { Vulnerability } from '../lib/api';
 
-interface VulnRowProps {
-  vulnerability: Vulnerability;
-  onEdit: (id: string) => void;
+interface Props {
+  vulns:  Vulnerability[];
+  onFix:  (repoId: string, issueId: string) => void;
 }
 
-export default function VulnTable({ vuln }: VulnRowProps) {
-  const { repo_id } = useParams();
+const SEV_COLOR: Record<string, { bg: string; color: string }> = {
+  critical: { bg: '#FCEBEB', color: '#A32D2D' },
+  high:     { bg: '#FEF3DC', color: '#7A4B00' },
+  medium:   { bg: '#EDF7E1', color: '#2D5A0E' },
+  low:      { bg: '#E8F0FB', color: '#1B3A6B' },
+};
+
+function ago(ts: number): string {
+  const diff = Math.floor((Date.now() / 1000) - ts);
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+export default function VulnTable({ vulns, onFix }: Props) {
+  if (vulns.length === 0) {
+    return (
+      <div style={s.empty}>
+        <p>No vulnerabilities found.</p>
+        <p style={{ marginTop: 6, color: '#aaa', fontSize: 13 }}>
+          Run a scan on one or more repos to populate this list.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="table-container">
-      <table>
+    <div style={s.container}>
+      <table style={s.table}>
         <thead>
           <tr>
-            <th>CVE</th>
-            <th>Severity</th>
-            <th>Package</th>
-            <th>From Version</th>
-            <th>To Version</th>
-            <th>Fixable</th>
-            <th>Actions</th>
+            {['Severity','Repo','Package','Version','CVE','Fixable','Source','Found','Action'].map(h => (
+              <th key={h} style={s.th}>{h}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>{vuln.cve ?? 'N/A'}</td>
-            <td>{vuln.severity}</td>
-            <td>{vuln.package_name}</td>
-            <td>{vuln.from_version}</td>
-            <td>{vuln.to_version ?? 'N/A'}</td>
-            <td>{vuln.fixable === 1 ? 'Yes' : 'No'}</td>
-            <td>
-              {/* Fix PR button removed - Free plan limitation */}
-              <span>Fix not available on Free plan</span>
-            </td>
-          </tr>
+          {vulns.map(v => {
+            const sev = SEV_COLOR[v.severity] ?? { bg: '#f5f5f0', color: '#555' };
+            const canFix = v.fixable === 1 && !!v.snyk_issue_id && !v.fix_pr_url;
+            return (
+              <tr key={v.id} style={s.tr}>
+                <td style={s.td}>
+                  <span style={{ ...s.badge, background: sev.bg, color: sev.color }}>
+                    {v.severity}
+                  </span>
+                </td>
+                <td style={{ ...s.td, ...s.repoCell }}>{v.repo_name ?? v.repo_id}</td>
+                <td style={s.td}><code style={s.code}>{v.package_name}</code></td>
+                <td style={s.td}>
+                  <span style={s.version}>{v.from_version}</span>
+                  {v.to_version && (
+                    <span style={s.arrow}> → <span style={s.fixVersion}>{v.to_version}</span></span>
+                  )}
+                </td>
+                <td style={s.td}>
+                  {v.cve
+                    ? <a href={`https://nvd.nist.gov/vuln/detail/${v.cve}`} target="_blank" rel="noreferrer" style={s.cveLink}>{v.cve}</a>
+                    : <span style={s.muted}>—</span>
+                  }
+                </td>
+                <td style={s.td}>
+                  {v.fixable === 1
+                    ? <span style={s.fixYes}>✓ Yes</span>
+                    : <span style={s.muted}>Manual</span>
+                  }
+                </td>
+                <td style={s.td}><span style={s.source}>{v.source.replace('github_', '').replace('_', ' ')}</span></td>
+                <td style={s.td}><span style={s.muted}>{ago(v.created_at)}</span></td>
+                <td style={s.td}>
+                  {v.fix_pr_url
+                    ? <a href={v.fix_pr_url} target="_blank" rel="noreferrer" style={s.prLink}>View PR ↗</a>
+                    : canFix
+                      ? <button onClick={() => onFix(v.repo_id, v.snyk_issue_id!)} style={s.fixBtn}>Fix via Snyk</button>
+                      : <span style={s.muted}>—</span>
+                  }
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
-interface VulnTableProps {
-  vuln: Vulnerability;
-}
-
-export default function VulnTableComponent({ vuln }: VulnTableProps) {
-  return <VulnRowProps {...vuln} />;
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  table: { width: '100%', borderCollapse: 'collapse', marginTop: '1rem' },
-  th: { border: '1px solid #ddd', padding: '8px', textAlign: 'left', fontSize: '12px', color: '#555' },
-  td: { border: '1px solid #ddd', padding: '8px', fontSize: '12px' },
-  container: { overflowX: 'auto' },
+const s: Record<string, React.CSSProperties> = {
+  container:   { overflowX: 'auto', background: '#fff', border: '0.5px solid #e8e8e0', borderRadius: 10 },
+  table:       { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
+  th:          { padding: '10px 12px', textAlign: 'left', color: '#888', fontWeight: 500, borderBottom: '0.5px solid #e8e8e0', whiteSpace: 'nowrap' },
+  tr:          { borderBottom: '0.5px solid #f0f0e8' },
+  td:          { padding: '9px 12px', verticalAlign: 'middle' },
+  repoCell:    { fontWeight: 500, color: '#1a1a18', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  badge:       { padding: '2px 8px', borderRadius: 99, fontWeight: 600, fontSize: 11 },
+  code:        { background: '#f5f5f0', padding: '1px 5px', borderRadius: 4, fontFamily: 'monospace', fontSize: 11 },
+  version:     { color: '#555' },
+  arrow:       { color: '#aaa' },
+  fixVersion:  { color: '#2D5A0E', fontWeight: 500 },
+  cveLink:     { color: '#1B3A6B', textDecoration: 'none', fontFamily: 'monospace', fontSize: 11 },
+  muted:       { color: '#aaa' },
+  fixYes:      { color: '#2D5A0E', fontWeight: 500 },
+  source:      { textTransform: 'capitalize' as const, color: '#555' },
+  prLink:      { color: '#1B3A6B', textDecoration: 'none', fontWeight: 500 },
+  fixBtn:      { padding: '4px 10px', background: '#1B3A6B', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 500, cursor: 'pointer' },
+  empty:       { padding: '3rem', textAlign: 'center', color: '#888', background: '#fff', borderRadius: 10, border: '0.5px solid #e8e8e0' },
 };

@@ -80,7 +80,7 @@ export default function QualityCard({ quality: q }: Props) {
 function MetricCell({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
   return (
     <div style={s.metricCell}>
-      <div style={{ ...s.metricVal, color: warn ? '#A32D2D' : 'var(--sgs-text)' }}>{value}</div>
+      <div style={{ ...s.metricVal, color: warn ? '#A32D2D' : '#1a1a18' }}>{value}</div>
       <div style={s.metricLabel}>{label}</div>
     </div>
   );
@@ -89,7 +89,7 @@ function MetricCell({ label, value, warn }: { label: string; value: string; warn
 const s: Record<string, React.CSSProperties> = {
   card:        { background:'#fff', border:'0.5px solid #e8e8e0', borderRadius:10, padding:'14px 16px' },
   header:      { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 },
-  repoName:    { fontSize:14, fontWeight:600, color:'var(--sgs-dark)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:200 },
+  repoName:    { fontSize:14, fontWeight:600, color:'#1B3A6B', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:200 },
   sonarLink:   { fontSize:11, color:'#1B3A6B', textDecoration:'none', whiteSpace:'nowrap' },
   ratings:     { display:'flex', gap:10, marginBottom:12 },
   ratingWrap:  { display:'flex', flexDirection:'column', alignItems:'center', gap:4, flex:1 },
@@ -97,7 +97,7 @@ const s: Record<string, React.CSSProperties> = {
   ratingLabel: { fontSize:10, color:'#888', textAlign:'center' as const },
   metrics:     { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:10 },
   metricCell:  { textAlign:'center' as const },
-  metricVal:   { fontSize:14, fontWeight:600 },
+  metricVal:   { fontSize:14, fontWeight:600, color:'#1a1a18' },
   metricLabel: { fontSize:10, color:'#888', marginTop:1 },
   footer:      { fontSize:11, color:'#aaa', borderTop:'0.5px solid #f0f0e8', paddingTop:8, marginTop:4 },
 };
