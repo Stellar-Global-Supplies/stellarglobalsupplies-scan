@@ -207,31 +207,51 @@ export interface CodeQualityRow {
 }
 
 export async function getLatestQualityAll(db: D1Database): Promise<CodeQualityRow[]> {
-  // Return the most recent quality row per repo
-  const { results } = await db.prepare(`
-    SELECT cq.*, r.name as repo_name
-    FROM code_quality cq
-    JOIN repos r ON cq.repo_id = r.id
-    JOIN (
-      SELECT repo_id, MAX(created_at) as max_created
-      FROM code_quality
-      GROUP BY repo_id
-    ) latest ON cq.repo_id = latest.repo_id AND cq.created_at = latest.max_created
-    ORDER BY r.name
-  `).all<CodeQualityRow>();
-  return results;
+  // Guard: if the code_quality table doesn't exist yet (migration not run),
+  // return [] instead of crashing the worker with a D1 error.
+  try {
+    const { results } = await db.prepare(`
+      SELECT cq.*, r.name as repo_name
+      FROM code_quality cq
+      JOIN repos r ON cq.repo_id = r.id
+      JOIN (
+        SELECT repo_id, MAX(created_at) as max_created
+        FROM code_quality
+        GROUP BY repo_id
+      ) latest ON cq.repo_id = latest.repo_id AND cq.created_at = latest.max_created
+      ORDER BY r.name
+    `).all<CodeQualityRow>();
+    return results;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Table missing — migration not yet applied
+    if (msg.includes('no such table')) {
+      console.warn('[db] code_quality table not found — run migration 0003. Returning [].');
+      return [];
+    }
+    throw e;
+  }
 }
 
 export async function getQualityHistory(db: D1Database, repoId: string): Promise<CodeQualityRow[]> {
-  const { results } = await db.prepare(`
-    SELECT cq.*, r.name as repo_name
-    FROM code_quality cq
-    JOIN repos r ON cq.repo_id = r.id
-    WHERE cq.repo_id = ?
-    ORDER BY cq.created_at DESC
-    LIMIT 20
-  `).bind(repoId).all<CodeQualityRow>();
-  return results;
+  try {
+    const { results } = await db.prepare(`
+      SELECT cq.*, r.name as repo_name
+      FROM code_quality cq
+      JOIN repos r ON cq.repo_id = r.id
+      WHERE cq.repo_id = ?
+      ORDER BY cq.created_at DESC
+      LIMIT 20
+    `).bind(repoId).all<CodeQualityRow>();
+    return results;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('no such table')) {
+      console.warn('[db] code_quality table not found — run migration 0003. Returning [].');
+      return [];
+    }
+    throw e;
+  }
 }
 
 export async function syncSonarProjectKeys(

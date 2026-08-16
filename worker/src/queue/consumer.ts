@@ -40,7 +40,8 @@ export async function handleQueue(
         allVulns.push(...alerts.map(parseDependabotAlert));
         console.log(`[Queue] Dependabot: ${alerts.length} alerts in ${repo.name}`);
       } catch (e) {
-        console.warn(`[Queue] Dependabot skipped for ${repo.name}:`, e);
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn(`[Queue] Dependabot skipped for ${repo.name}: ${msg}`);
       }
 
       // ── 2. GitHub Code Scanning — SAST (free, public repos) ───────────────
@@ -49,7 +50,8 @@ export async function handleQueue(
         allVulns.push(...alerts.map(parseCodeScanningAlert));
         console.log(`[Queue] Code scanning: ${alerts.length} alerts in ${repo.name}`);
       } catch (e) {
-        console.warn(`[Queue] Code scanning skipped for ${repo.name}:`, e);
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn(`[Queue] Code scanning skipped for ${repo.name}: ${msg}`);
       }
 
       await insertVulnerabilities(env.DB, job.scan_run_id, job.repo_id, allVulns);

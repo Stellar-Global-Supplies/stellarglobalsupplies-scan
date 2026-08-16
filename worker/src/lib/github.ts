@@ -103,8 +103,20 @@ export async function fetchDependabotAlerts(
     const url = `${GITHUB_API}/repos/${owner}/${repo}/dependabot/alerts?per_page=100&page=${page}&state=open`;
     const res = await fetch(url, { headers: githubHeaders(token) });
 
-    if (res.status === 404) break; // Dependabot not enabled for this repo
-    if (!res.ok) throw new Error(`GitHub dependabot alerts failed: ${res.status} ${await res.text()}`);
+    if (res.status === 404) {
+      // Dependabot not enabled or repo not found — normal, skip silently
+      break;
+    }
+    if (res.status === 403 || res.status === 451) {
+      // 403 = token lacks security_events scope or Dependabot not enabled at org level
+      // 451 = unavailable for legal reasons / GHES restriction
+      const body = await res.text();
+      throw new Error(`Dependabot alerts blocked (HTTP ${res.status}): ${body}`);
+    }
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Dependabot alerts failed (HTTP ${res.status}): ${body}`);
+    }
 
     const body = await res.json<GitHubDependabotAlert[]>();
     alerts.push(...body);
@@ -129,8 +141,20 @@ export async function fetchCodeScanningAlerts(
     const url = `${GITHUB_API}/repos/${owner}/${repo}/code-scanning/alerts?per_page=100&page=${page}&state=open`;
     const res = await fetch(url, { headers: githubHeaders(token) });
 
-    if (res.status === 404) break; // Code scanning not enabled for this repo
-    if (!res.ok) throw new Error(`GitHub code scanning alerts failed: ${res.status} ${await res.text()}`);
+    if (res.status === 404) {
+      // Code scanning not enabled for this repo — normal, skip silently
+      break;
+    }
+    if (res.status === 403 || res.status === 451) {
+      // 403 = token lacks security_events scope or Advanced Security not enabled
+      // 451 = unavailable for legal reasons / GHES restriction
+      const body = await res.text();
+      throw new Error(`Code scanning alerts blocked (HTTP ${res.status}): ${body}`);
+    }
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Code scanning alerts failed (HTTP ${res.status}): ${body}`);
+    }
 
     const body = await res.json<GitHubCodeScanningAlert[]>();
     alerts.push(...body);
