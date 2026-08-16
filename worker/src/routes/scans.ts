@@ -1,84 +1,80 @@
 import { Hono } from 'hono';
 import { Env } from '../types';
-import { getAllRepos, getRepo, upsertReposFromGitHub, syncSnykProjectIds } from '../lib/db';
-import { fetchOrgRepos } from '../lib/github';
-import { fetchSnykProjects } from '../lib/snyk';
+import { getAllRepos, getRepo, createScanRun } from '../lib/db';
 
-const repos = new Hono<{ Bindings: Env }>();
+const scans = new Hono<{ Bindings: Env }>();
 
-// GET /api/repos
-repos.get('/', async (c) => {
-  const allRepos = await getAllRepos(c.env.DB);
-  const enriched = await Promise.all(
-    allRepos.map(async (repo) => {
-      const latestScan = await c.env.DB
-        .prepare('SELECT status, finished_at, vuln_count FROM scan_runs WHERE repo_id = ? ORDER BY started_at DESC LIMIT 1')
-        .bind(repo.id)
-        .first<{ status: string; finished_at: number | null; vuln_count: number }>();
-      return { ...repo, latest_scan: latestScan ?? null };
-    })
-  );
-  return c.json({ repos: enriched });
-});
-
-// GET /api/repos/:id
-repos.get('/:id', async (c) => {
-  const repo = await getRepo(c.env.DB, c.req.param('id'));
-  if (!repo) return c.json({ error: 'Repo not found' }, 404);
-  return c.json({ repo });
-});
-
-// POST /api/repos/sync — pull all GitHub org repos into D1
-repos.post('/sync', async (c) => {
+// POST /api/scans/all — queue a scan for every repo
+scans.post('/all', async (c) => {
   try {
-    const githubToken = await c.env.GITHUB_TOKEN.get();
-    const githubRepos = await fetchOrgRepos('Stellar-Global-Supplies', githubToken);
-
-    if (githubRepos.length === 0) {
-      return c.json({ message: 'No repos found in GitHub org.', synced: 0 });
+    const allRepos = await getAllRepos(c.env.DB);
+    if (allRepos.length === 0) {
+      return c.json({ queued: 0, message: 'No repos found. Run /api/repos/sync first.' });
     }
 
-    const result = await upsertReposFromGitHub(c.env.DB, githubRepos);
-    return c.json({
-      synced:   githubRepos.length,
-      inserted: result.inserted,
-      updated:  result.updated,
-      message:  `Synced ${githubRepos.length} repos from GitHub into D1.`,
-    });
-  } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : 'Sync failed' }, 500);
-  }
-});
-
-// POST /api/repos/snyk-sync
-// Fetches all existing Snyk projects and matches them to repos in D1
-// No import step needed — your repos are already in Snyk
-// Free tier on public repos: unlimited
-repos.post('/snyk-sync', async (c) => {
-  try {
-    const [snykToken, snykOrgId] = await Promise.all([
-      c.env.SNYK_API_TOKEN.get(),
-      c.env.SNYK_ORG_ID.get(),
-    ]);
-
-    const snykProjects = await fetchSnykProjects(snykOrgId, snykToken);
-
-    if (snykProjects.length === 0) {
-      return c.json({
-        message: 'No GitHub-backed projects found in your Snyk org.',
-        synced:  0,
+    let queued = 0;
+    for (const repo of allRepos) {
+      const scanRunId = await createScanRun(c.env.DB, repo.id, 'manual-all', 'manual');
+      await c.env.SCAN_QUEUE.send({
+        type:         'scan_repo',
+        repo_id:      repo.id,
+        scan_run_id:  scanRunId,
+        triggered_by: 'manual-all',
       });
+      queued++;
     }
 
-    const synced = await syncSnykProjectIds(c.env.DB, snykProjects);
     return c.json({
-      found:   snykProjects.length,
-      synced,
-      message: `Found ${snykProjects.length} Snyk projects, matched ${synced} repos in D1.`,
+      queued,
+      message: `Queued ${queued} repo(s) for scanning.`,
     });
   } catch (err: unknown) {
-    return c.json({ error: err instanceof Error ? err.message : 'Snyk sync failed' }, 500);
+    return c.json({ error: err instanceof Error ? err.message : 'Scan all failed' }, 500);
   }
 });
 
-export default repos;
+// POST /api/scans/repo/:id — queue a scan for a single repo
+scans.post('/repo/:id', async (c) => {
+  try {
+    const repoId = c.req.param('id');
+    const repo   = await getRepo(c.env.DB, repoId);
+    if (!repo) return c.json({ error: 'Repo not found' }, 404);
+
+    const scanRunId = await createScanRun(c.env.DB, repo.id, 'manual', 'manual');
+    await c.env.SCAN_QUEUE.send({
+      type:         'scan_repo',
+      repo_id:      repo.id,
+      scan_run_id:  scanRunId,
+      triggered_by: 'manual',
+    });
+
+    return c.json({
+      scan_run_id: scanRunId,
+      status:      'queued',
+      message:     `Scan queued for ${repo.name}.`,
+    });
+  } catch (err: unknown) {
+    return c.json({ error: err instanceof Error ? err.message : 'Scan failed' }, 500);
+  }
+});
+
+// GET /api/scans/status/:scanRunId
+scans.get('/status/:scanRunId', async (c) => {
+  const row = await c.env.DB
+    .prepare('SELECT * FROM scan_runs WHERE id = ?')
+    .bind(c.req.param('scanRunId'))
+    .first();
+  if (!row) return c.json({ error: 'Scan run not found' }, 404);
+  return c.json({ scan: row });
+});
+
+// GET /api/scans/repo/:id — history for a repo
+scans.get('/repo/:id', async (c) => {
+  const rows = await c.env.DB
+    .prepare('SELECT * FROM scan_runs WHERE repo_id = ? ORDER BY started_at DESC LIMIT 20')
+    .bind(c.req.param('id'))
+    .all();
+  return c.json({ scans: rows.results });
+});
+
+export default scans;

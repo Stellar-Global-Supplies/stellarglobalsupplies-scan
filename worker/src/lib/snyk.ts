@@ -3,13 +3,16 @@
 
 const SNYK_REST = 'https://api.snyk.io/rest';
 const SNYK_V1   = 'https://api.snyk.io/v1';
-const SNYK_VER  = '2024-01-23';
+const SNYK_VER  = '2024-10-15';  // Updated to a stable GA version
 
-function headers(token: string): HeadersInit {
-  return {
+function headers(token: string, isRest = false): HeadersInit {
+  const base: Record<string, string> = {
     'Authorization': `token ${token}`,
     'Content-Type':  'application/json',
   };
+  // REST API also accepts a version header (belt-and-suspenders alongside query param)
+  if (isRest) base['snyk-version'] = SNYK_VER;
+  return base;
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -62,7 +65,7 @@ export async function fetchSnykProjects(
     `${SNYK_REST}/orgs/${orgId}/projects?version=${SNYK_VER}&limit=100&status=active`;
 
   while (nextUrl) {
-    const res = await fetch(nextUrl, { headers: headers(token) });
+    const res = await fetch(nextUrl, { headers: headers(token, true) });
     if (!res.ok) throw new Error(`Snyk projects fetch failed: ${res.status} ${await res.text()}`);
 
     const body = await res.json<{
